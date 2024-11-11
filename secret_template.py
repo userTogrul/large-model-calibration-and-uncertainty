@@ -1,0 +1,10 @@
+'''
+    Common secrets.
+'''
+
+OPENAI_API_KEY = ''
+COUNTRY_CODE = 3166
+TELEGRAM_API_TOKEN = ''
+TELEGRAM_CHAT_ID = ''
+WANDB_API_KEY = ''
+HF_TOKEN = ''
