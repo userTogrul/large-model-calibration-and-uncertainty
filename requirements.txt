@@ -168,3 +168,4 @@ einops==0.7.0
 deepsig==1.2.8
 evaluate==0.4.3
 sentencepiece==0.1.97
+pudb==2024.1.3

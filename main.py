@@ -70,7 +70,7 @@ from src.evaluation import (
     evaluate_confidences,
 )
 from src.plots import plot_conf, plot_uncert, plot_reliability_diagram
-
+# from pudb import set_trace; set_trace() # for debugging
 
 # SECRETS
 SECRET_IMPORTED = False
@@ -271,12 +271,6 @@ def run_calibration_benchmark(
     # Do scaling methods for calibration
     temperature_scalers = {}
     for method in ["ps_seq_likelihood", "ts_seq_likelihood"]:
-         for question_data in calibration_data[split].values():
-               try:
-                    print(question_data["seq_likelihood"])
-               except TypeError:
-                    print("TypeError: ", question_data)
-                    continue
 
          train_likelihoods = np.array(
                [
@@ -319,7 +313,7 @@ def run_calibration_benchmark(
                    scaler.train_parameters(
                         train_probabilities=train_likelihoods,
                         train_targets=train_targets,
-                        batch_size=calibration_batch_size,
+                        batch_size=DATASET_SPLIT_SIZES[dataset_name]["train"], # use fullbatch for L-BFGS 
                         learning_rate=calibration_learning_rate,
                         num_steps=calibration_num_steps,
                    )
@@ -349,12 +343,12 @@ def run_calibration_benchmark(
 
               cot_likelihoods = np.array(
                    [
-                        question_data["cot_likelihood"]
+                        question_data["cot_seq_likelihood"]
                         for question_data in split_data.values()
                    ]
               )
               cot_likelihoods[np.isnan(cot_likelihoods)] = 0
-              baseline_confidences[split_name]["cot_likelihood"] = cot_likelihoods
+              baseline_confidences[split_name]["cot_seq_likelihood"] = cot_likelihoods
 
               # Parametric scaling methods
               if method in ["ps_seq_likelihood", "ts_seq_likelihood"]:
@@ -435,14 +429,14 @@ def run_calibration_benchmark(
                         correctness,
                         save_path=os.path.join(
                              img_dir,
-                             f"{split_name}_{baseline_name}.pdf",
+                             f"{split_name}_{baseline_name}_{dataset_name}_{model_name.replace("/", "_")}.pdf",
                         ),
                         success_percentage=baseline_results.get(
                              f"{split_name}_{baseline_name}_success", 1
                         ),
                    )
 
-    # Save results
+    # Create results directory to save results
     baseline_results_dir=None
     
     if result_dir is not None:
@@ -458,7 +452,10 @@ def run_calibration_benchmark(
 
     for baseline_name, baseline_data in eval_data.items():
          with open(
-              os.path.join(baseline_results_dir, f"{timestamp}_{baseline_name}_results.dill"), 
+              os.path.join(
+                   baseline_results_dir, 
+                   f"{timestamp}_{baseline_name}_results.dill",
+               ), 
               "wb",
          ) as results_file:
               dill.dump(
@@ -474,7 +471,6 @@ def run_calibration_benchmark(
                    results_file,
               )
     results_df = pd.DataFrame(columns=EVAL_METRIC_ORDER)
-
     # CREATE RESULTS DATAFRAME
     test_splits = [
          split for split in calibration_data.keys() if "test" in split

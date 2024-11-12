@@ -20,7 +20,7 @@ from sklearn.isotonic import IsotonicRegression # isotonic regression
 def check_answer_correctness(
     correct_answers: List[str],
     model_answers: List[str],
-    bleu_threshold: float = 0.5, # threshold for BLEU score
+    bleu_threshold: float = 0.3, # threshold for BLEU score
 ) -> List[bool]:
     global bleu_score
 
@@ -97,10 +97,10 @@ def evaluate_confidences(
         infix = f"{add_name}_"
         
     metrics = {
-        f"{split_name}_{infix}ECE": ece(all_confidences, all_correctness),
+        f"{split_name}_{infix}ECE": ece(y_true=all_correctness, y_pred=all_correctness),
         f"{split_name}_{infix}SmoothECE": SmECE(f=np.array(all_confidences), y=np.array(all_targets)),
         f"{split_name}_{infix}Brier_Score": brier_score_loss(
-            y_true=all_confidences, y_prob=all_correctness
+            y_true=all_correctness, y_prob=all_confidences
         ),
         f"{split_name}_{infix}AUROC": roc_auc_score(
             y_true=all_correctness, y_score=all_confidences,

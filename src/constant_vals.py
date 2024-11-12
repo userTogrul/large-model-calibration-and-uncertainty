@@ -48,7 +48,7 @@ QUALITATIVE_SCALE = {
     "High": 0.7,
     "Very high": 1,
 }
-SEED = 121212
+SEED = 1212
 INPUT_PARTS= ["question", "answer"] # Default composition of inputs
 END_OF_GENERATION_TOKENS = [
     "Question:",

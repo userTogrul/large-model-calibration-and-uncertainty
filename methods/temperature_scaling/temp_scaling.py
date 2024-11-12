@@ -14,7 +14,7 @@ import warnings
 # EXTERNAL LIB
 import numpy as np
 import pandas as pd
-import tqdm
+from tqdm import tqdm # mind the modules for importing tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,7 +28,7 @@ class TemperatureScaling(nn.Module):
         self.temperature = nn.Parameter(torch.ones(1) * 1.5)
     
     def forward(self, raw_probabilities: torch.FloatTensor) -> torch.FloatTensor:
-        return F.softmax(raw_probabilities / self.temperature, dim=1)
+        return F.softmax(raw_probabilities / self.temperature, dim=-1) # can be negative
     
     def train_parameters(
         self,
@@ -38,36 +38,27 @@ class TemperatureScaling(nn.Module):
         learning_rate: float,
         num_steps: int,
     ):
-        optimizer = optim.lbfgs([self.temperature], lr=learning_rate)
-        loss_fn = nn.CrossEntropyLoss()
+        optimizer = optim.LBFGS([self.temperature], lr=learning_rate, max_iter=num_steps)
+        loss_fn = nn.NLLLoss()
         train_dataloader = DataLoader(
-            TensorDataset(train_probabilities, train_targets),
+            TensorDataset(train_probabilities, train_targets.type(torch.LongTensor)),
             batch_size=batch_size,
         )
-        best_temperature = self.temperature.clone().detach()
-        best_loss = float("inf")
         with tqdm(total=num_steps) as pbar:
-            for i, (inputs, targets) in tqdm(
-                enumerate(loop_dataloader(train_dataloader)), total=num_steps
-            ):
-                if i > num_steps:
+            for i, (inputs, targets) in enumerate(loop_dataloader(train_dataloader)): 
+                if i >= 1:
                     break
 
-                outputs = self.forward(inputs)
-                loss = loss_fn(outputs, targets)
-                loss.backward()
-                optimizer.step()   
-                optimizer.zero_grad()
-                pbar.set_description(
-                    f"Step #{i+1} - Loss: {loss.detach().cpu().item():.4f}"
-                )                
-                pbar.update(1)
-        
-                if loss.item() < best_loss:
-                    best_loss = loss.item()
-                    best_temperature = self.temperature.clone().detach()
+                def closure(): # necessary for LBFGS optimizer   
+                    optimizer.zero_grad()
+                    outputs = self.forward(inputs)
+                    log_outputs = torch.log(outputs)
+                    loss = loss_fn(log_outputs, targets)
+                    loss.backward()
+                    return loss
+                optimizer.step(closure)
         
         with torch.no_grad():
-            self.temperature = self.temperature.copy_(best_temperature) # inplace update
-        print(f"Training for Temperature Scaling completed. Best training Loss: {best_loss:.4f}")
+            self.temperature.clamp_(min=1e-6) # make sure temperature is positive
+        print(f"Training for Temperature Scaling completed. Best temperature: {self.temperature.item():.4f}")
 

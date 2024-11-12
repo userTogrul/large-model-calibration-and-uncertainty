@@ -10,6 +10,7 @@ from typing import Dict, Any, Callable, List, Tuple, Optional
 import dill
 from httpx import HTTPStatusError
 from openai import OpenAI
+import openai
 # External lib
 import tiktoken
 import datasets
@@ -124,6 +125,10 @@ def num_tokens_from_messages(messages, model="gpt-4o-mini-2024-07-18"):
     num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
     return num_tokens
 
+########################################################################
+###### GENERATE CALIBRATION OUTPUTS USING THE PREPROCESSED INPUTS ######
+########################################################################
+
 def extract_black_box_calibration_data(
     model_name: str,
     num_in_context_samples: int,
@@ -164,7 +169,6 @@ def extract_black_box_calibration_data(
 
     else:
         split_calibration_data = {}
-
 
         with open(
             os.path.join(source_data_dir, f"calibration_data_{split}.dill"), "rb"
@@ -297,6 +301,8 @@ def extract_black_box_calibration_data(
         calibration_split_path = os.path.join(
             calibration_data_dir, f"calibration_data_{split}.dill"
         )
+    except openai.AuthenticationError as e:
+        print(f"API Connection Error: {e}")
     finally:
 
         if len(open_ai_calibration_data) > 0:
@@ -406,18 +412,18 @@ def extract_model_calibration_data(
         # generate sequence likelihoods
         generated_answer_ids = outputs["sequences"][
             :, inputs.shape[1] :
-        ].squeeze(0)
+        ].squeeze(0) # extract only output sequence ids, starting from the input length to the end.
         predictions = torch.log(
             F.softmax(torch.stack(
                 outputs["scores"], dim=1), 
                 dim=-1
-            ) # convert logits to probabilities
+            ) # Apply softmax to the last dim (vocabulary size)
         )
         log_probs = torch.gather(
             predictions,
             dim=-1,
             index=generated_answer_ids.unsqueeze(-1),
-        ).squeeze(-1) # get the log probability of the generated answer
+        ).squeeze(-1) # extract the log probability of the generated answer [sequence_length_generated, 1]
         token_mask = torch.all(
             torch.stack(
                 [
@@ -427,10 +433,10 @@ def extract_model_calibration_data(
                 dim=-1,
             ),
             dim=-1,
-        ).long() # remove the special tokens
-        num_tokens = token_mask.sum(dim=-1) # count the number of tokens
-        seq_likelihoods = (log_probs * token_mask).sum(-1) / num_tokens # calculate the average log probability
-        seq_likelihoods = torch.exp(seq_likelihoods) # convert to probability exponential
+        ).long() # this line converts bool tensor to long tensor (1s and 0s)
+        num_tokens = token_mask.sum(dim=-1) # count the number of tokens, Since token_mask is a 1D tensor, dim=-1 sums over the entire tensor.
+        seq_likelihoods = (log_probs * token_mask).sum(-1) / num_tokens # calculate the average log probability, Averaging allows for comparison across sequences of different lengths.
+        seq_likelihoods = torch.exp(seq_likelihoods) # convert average lop probs to average pertoken  probability exponential
         #CoT
         cot_generated_answer_ids = cot_outputs["sequences"][
             :, cot_inputs.shape[1] :
@@ -604,7 +610,10 @@ def create_or_load_calibration_data(
         del calibration_data["included_questions"]
     
     return calibration_data, included_questions
-        
+
+########################################
+######GENERATE INPUTS###################
+########################################
 # Create a preprocess_batch_wrapper for TruthfulQA dataset
 def preprocess_batch_wrapper(
     train_data: Dataset,
@@ -647,12 +656,13 @@ def preprocess_batch_wrapper(
                 
             few_shot_prompts.append(few_shot_prompt)
         
+        # Qwen adaptation for English
         batch_with_prompt = [
-            few_shot_prompt + "Question: " + question + " Answer: "
+            few_shot_prompt + "Question: " + question + " Your response should only be in english and no other language." + " Answer: "
             for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
         ]
         batch_with_cot_prompt = [
-            few_shot_prompt + QA_COT_PROMPT + " Question: " + question + " Answer: "
+            few_shot_prompt + QA_COT_PROMPT + " Question: " + question + " Your response should only be in english and no other language." + " Answer: "
             for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
         ]
         tokenizer.padding_side = "left" # necessary for left padding
@@ -731,11 +741,11 @@ def preprocess_batch_wrapper_truthful_qa(
             few_shot_prompts.append(few_shot_prompt)
         
         batch_with_prompt = [
-            few_shot_prompt + "Question: " + question + " Answer: "
+            few_shot_prompt + "Question: " + question + " Your response should only be in english and no other language." + " Answer:"
             for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
         ]
         batch_with_cot_prompt = [
-            few_shot_prompt + QA_COT_PROMPT + " Question: " + question + " Answer: "
+            few_shot_prompt + QA_COT_PROMPT + " Question: " + question + " Your response should only be in english and no other language." + " Answer:"
             for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
         ]
         tokenizer.padding_side = "left" # necessary for left padding
@@ -927,7 +937,7 @@ def preprocess_truthful_qa(
         for split_name, data_split, data_loader_path in zip(
             ["train", "test"], 
             [train_data, test_data], 
-            [train_data_loader_path, test_data_loader_path]
+            [train_data_loader_path, test_data_loader_path],
         ):
         
             if os.path.exists(data_loader_path):

@@ -9,7 +9,7 @@ import warnings
 # EXTERNAL LIB
 import numpy as np
 import pandas as pd
-import tqdm
+from tqdm import tqdm # minds the module for IMPORTING
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,7 +20,7 @@ from src.data import loop_dataloader
 class PlattScaling(nn.Module):
     def __init__(self): # checkout the name __init__ for underscore NUMBER
         super().__init__()
-        self.scale = nn.Parameter(torch.ones(1) * 1.5) # prevent extreme values
+        self.scale = nn.Parameter(torch.ones(1) * 0.5) # prevent extreme values
         self.bias = nn.Parameter(torch.zeros(1))
     
     def forward(self, raw_probabilities: torch.FloatTensor) -> torch.FloatTensor:
