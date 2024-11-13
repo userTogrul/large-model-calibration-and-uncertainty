@@ -54,7 +54,8 @@ from src.constant_vals import (
      INPUT_PARTS,
      BLACK_BOX_MODELS,
      QUALITATIVE_SCALE,
-     EVAL_METRIC_ORDER
+     EVAL_METRIC_ORDER,
+     MAX_INPUT_LENGTH
 )
 from methods.platt_scaling.platt_scaling import PlattScaling
 from methods.temperature_scaling.temp_scaling import TemperatureScaling
@@ -210,7 +211,7 @@ def run_calibration_benchmark(
                    low_cpu_mem_usage=True, 
                    config=config,
               ).to(device)
-              tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+              tokenizer = AutoTokenizer.from_pretrained(model_name, padding='max_length', padding_side="left", max_length=MAX_INPUT_LENGTH)
 
               if tokenizer.pad_token is None:
                     tokenizer.pad_token = tokenizer.eos_token
@@ -251,7 +252,6 @@ def run_calibration_benchmark(
                          split=split, 
                          dataset_name=dataset_name,
                          num_in_context_samples=num_in_context_samples,
-                         openai_api_key=OPENAI_API_KEY,
                          data_dir=data_dir, 
                     )
               pass
@@ -322,7 +322,7 @@ def run_calibration_benchmark(
     # BASELINE RESULTS
     baseline_confidences = defaultdict(dict) # 
     baseline_results = {}
-    masks = defaultdict(dict) # ?
+    masks = defaultdict(dict) # For qualitative verbalization
 
     for method in baseline_methods:
          for split_name in data_split_names:
@@ -423,13 +423,15 @@ def run_calibration_benchmark(
                    
                    if not os.path.exists(img_dir):
                         os.makedirs(img_dir)
+
+                   model_name_edited = model_name.replace("/", "_")
                    
                    plot_reliability_diagram( # TODO: Check this
                         confidences,
                         correctness,
                         save_path=os.path.join(
                              img_dir,
-                             f"{split_name}_{baseline_name}_{dataset_name}_{model_name.replace("/", "_")}.pdf",
+                             f"{split_name}_{baseline_name}_{dataset_name}_{model_name_edited}.pdf",
                         ),
                         success_percentage=baseline_results.get(
                              f"{split_name}_{baseline_name}_success", 1
@@ -486,9 +488,9 @@ def run_calibration_benchmark(
                         break
                    
     print(results_df)
-    print(results_df.to_latex(float_format="%.2f"))
+    print(results_df.to_latex(float_format="%.4f"))
     for name, result in baseline_results.items():
-         print(f"{name}: {result:.2f}")
+         print(f"{name}: {result:.4f}")
 
     # Log to wandb
     if wandb_run is not None:

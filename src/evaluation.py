@@ -97,7 +97,7 @@ def evaluate_confidences(
         infix = f"{add_name}_"
         
     metrics = {
-        f"{split_name}_{infix}ECE": ece(y_true=all_correctness, y_pred=all_correctness),
+        f"{split_name}_{infix}ECE": ece(y_true=all_correctness, y_pred=all_confidences),
         f"{split_name}_{infix}SmoothECE": SmECE(f=np.array(all_confidences), y=np.array(all_targets)),
         f"{split_name}_{infix}Brier_Score": brier_score_loss(
             y_true=all_correctness, y_prob=all_confidences

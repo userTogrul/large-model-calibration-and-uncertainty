@@ -46,7 +46,10 @@ from src.prompts import (
 from src.evaluation import check_answer_correctness
 # CUSTOM
 DataSplits = namedtuple("DataSplits", ["train", "test"])
-
+from secret import (
+    BASE_URL,
+    OPENAI_API_KEY,
+)
 os.environ['HF_HOME'] = HF_HOME
 
 def unpack_dataloader(
@@ -135,7 +138,6 @@ def extract_black_box_calibration_data(
     split: str,
     data_dir: str,
     dataset_name: str,
-    openai_api_key: Optional[str] = None,
     source_data_model_name: str="meta-llama/Llama-3.1-8B-Instruct",
 ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     """
@@ -176,7 +178,8 @@ def extract_black_box_calibration_data(
             split_calibration_data[split] = dill.load(f)
     
     client = OpenAI(
-        api_key=openai_api_key
+        api_key=OPENAI_API_KEY,
+        base_url=BASE_URL
     )
 
     open_ai_calibration_data = {}
@@ -734,7 +737,7 @@ def preprocess_batch_wrapper_truthful_qa(
                     answer = (
                         sample["best_answer"]
                         if "best_answer" in sample and not isinstance(sample["best_answer"], dict)
-                        else sample.get("best_answer", sample["answer"]["value"])
+                        else sample.get("best_answer", sample["best_answer"]["value"])
                     )
                     few_shot_prompt += QA_FEW_SHOT_TEMPLATE.format(question=sample["question"], answer=answer)
                 
