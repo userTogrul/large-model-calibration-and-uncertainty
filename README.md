@@ -25,7 +25,7 @@ To run a script for **Llama-3.1-8B-Instruct**, use the following command:
 
 type 'Yes' or 'y' when prompted.
 
-For **Mistral-7B-Instruct**, use the following command:
+For **Mistral-7B-Instruct-v0.3**, use the following command:
 
     sh run_mistral.sh
 
@@ -65,7 +65,7 @@ For **gpt-4 & gpt-4o-mini**, use the following command:
 - **Recall@1 AUROC**
   -  Url: A representation learning benchmark for transferable uncertainty estimates. _Kirchhof, Michael, et al._ Advances in Neural Information Processing Systems 36 (2023): 13956-13980.[[paper](https://arxiv.org/pdf/2307.03810)][[code](https://github.com/mkirchhof/url/tree/url_at_time_of_submission)]
 
-- **Semantic Uncertainty**
+- **Entropy-based**
   - Detecting hallucinations in large language models using semantic entropy. _Farquhar, Sebastian, et al._ Nature 630.8017 (2024): 625-630 [[paper](https://www.nature.com/articles/s41586-024-07421-0)][[code](https://github.com/jlko/semantic_uncertainty)]
   - Measuring Uncertainty in Neural Machine Translation with Similarity-Sensitive Entropy. _Cheng, Julius, and Andreas Vlachos._ Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers). 2024.[[paper](https://aclanthology.org/2024.eacl-long.129.pdf)][[code](https://github.com/juliusc/s3e)]
   - Semantic uncertainty: Linguistic invariances for uncertainty estimation in natural language generation. _Kuhn, Lorenz, Yarin Gal, and Sebastian Farquhar._ arXiv preprint arXiv:2302.09664 (2023) [[paper](https://arxiv.org/pdf/2302.09664)][[code](https://github.com/lorenzkuhn/semantic_uncertainty)]
@@ -75,10 +75,6 @@ For **gpt-4 & gpt-4o-mini**, use the following command:
   - Large language models cannot self-correct reasoning yet. _Huang, Jie, et al._ The Twelfth International Conference on Learning Representations (2024).[[paper](https://openreview.net/pdf?id=IkmD3fKBPQ)]
   - Self-refine: Iterative refinement with self-feedback. _Madaan, Aman, et al._ Advances in Neural Information Processing Systems 36 (2024). [[paper](https://arxiv.org/pdf/2303.17651)][[code](https://github.com/madaan/self-refine)]
   - Language models (mostly) know what they know.  _Kadavath, Saurav, et al._ arXiv preprint arXiv:2207.05221 (2022).[[paper](https://arxiv.org/pdf/2207.05221)]
-
-- **Self-Consistency**
-  - Can llms express their uncertainty? an empirical evaluation of confidence elicitation in llms.  _Xiong, Miao, et al._ The Twelfth International Conference on Learning Representations (2024).[[paper](https://openreview.net/pdf?id=gjeQKFxFpZ)][[code](https://github.com/MiaoXiong2320/llm-uncertainty)]
-  - Self-consistency improves chain of thought reasoning in language models. _Wang, Xuezhi, et al._ The Eleventh International Conference on Learning Representations (2023). [[paper](https://openreview.net/pdf?id=1PL1NIMMrw)][[code](https://github.com/codelion/optillm/blob/main/optillm/self_consistency.py)]
 
 ### Calibration
 #### Metrics
@@ -105,6 +101,20 @@ For **gpt-4 & gpt-4o-mini**, use the following command:
 - **Patch Accuracy vs Patch Uncertainty (PAvPU)**
   - Evaluating bayesian deep learning methods for semantic segmentation. _Mukhoti, Jishnu, and Yarin Gal._ arXiv preprint arXiv:1811.12709 (2018).[[paper](https://arxiv.org/pdf/1811.12709)][[code](https://github.com/IntelLabs/AVUC)]
 
+- **Trust Score**
+  - To trust or not to trust a classifier. _Jiang, Heinrich, et al._ Advances in neural information processing systems 31 (2018).[[paper](https://arxiv.org/pdf/1805.11783)][[code](https://github.com/google/TrustScore)]
+
+#### Open-Box Calibration
+- **Label Smoothing**
+  - On the inference calibration of neural machine translation. _Wang, Shuo, et al._ arXiv preprint arXiv:2005.00963 (2020).[[paper](https://arxiv.org/pdf/2005.00963)][[code](https://github.com/shuo-git/InfECE)]
+  - Calibration of pre-trained transformers. _Desai, Shrey, and Greg Durrett_ arXiv preprint arXiv:2003.07892 (2020). [[paper](https://arxiv.org/pdf/2003.07892)][[code](https://github.com/shreydesai/calibration)]
+  - When does label smoothing help? _Müller, Rafael, Simon Kornblith, and Geoffrey E. Hinton._ Advances in neural information processing systems 32 (2019). [[paper](https://arxiv.org/pdf/1906.02629v3)][[code](https://github.com/seominseok0429/label-smoothing-visualization-pytorch)]
+
+- **Fine-tuning**
+  - Calibrating sequence likelihood improves conditional language generation. _Zhao, Yao, et al._  The Eleventh International Conference on Learning Representations. 2023. [[paper](https://openreview.net/pdf?id=0qSOodKmJaN)]
+  - SLiC-HF: Sequence likelihood calibration with human feedback. _Zhao, Yao, et al._ arXiv preprint arXiv:2305.10425 (2023).[[paper](https://arxiv.org/pdf/2305.10425)][[huggingface](https://huggingface.co/papers/2305.10425)]
+  - How can we know when language models know? on the calibration of language models for question answering. _Jiang, Zhengbao, et al._ Transactions of the Association for Computational Linguistics 9 (2021): 962-977.[[paper](https://aclanthology.org/2021.tacl-1.57.pdf)][[code](https://github.com/jzbjyb/lm-calibration)]
+  - Calibrating deep neural networks using focal loss. _Mukhoti, Jishnu, et al._ Advances in Neural Information Processing Systems 33 (2020): 15288-15299.[[paper](https://arxiv.org/pdf/2002.09437)][[code](https://github.com/torrvision/focal_calibration)]
 
 #### Post-hoc Calibration Methods
 
@@ -117,10 +127,11 @@ For **gpt-4 & gpt-4o-mini**, use the following command:
 - **Scale-binning calibrator**
   - Verified uncertainty calibration. _Kumar, Ananya, Percy S. Liang, and Tengyu Ma._ Advances in Neural Information Processing Systems 32 (2019).[[paper](https://arxiv.org/pdf/1909.10155)][[code](https://github.com/p-lambda/verified_calibration)]
 
-#### Black-Box Calibration of Language Models
+#### Closed-Box Calibration of Language Models
 
 - **Auxiliary Model**
   - Calibrating Large Language Models Using Their Generations Only _Ulmer, Dennis, et al._ arXiv preprint arXiv:2403.05973 (2024). [[paper](https://arxiv.org/pdf/2403.05973)][[code](https://github.com/parameterlab/apricot/blob/main/README.md?plain=1)]
+  - Llamas Know What GPTs Don't Show: Surrogate Models for Confidence Estimation. _Shrivastava, Vaishnavi, Percy Liang, and Ananya Kumar_  arXiv preprint arXiv:2311.08877 (2023).[[paper](https://arxiv.org/pdf/2311.08877)]
 
 - **Linguistic Calibration**
   - Just ask for calibration: Strategies for eliciting calibrated confidence scores from language models fine-tuned with human feedback. _Tian, Katherine, et al._  arXiv preprint arXiv:2305.14975 (2023).[[paper](https://arxiv.org/pdf/2305.14975)]
@@ -128,6 +139,11 @@ For **gpt-4 & gpt-4o-mini**, use the following command:
   - Can llms express their uncertainty? an empirical evaluation of confidence elicitation in llms. _Xiong, Miao, et al._  arXiv preprint arXiv:2306.13063 (2023) [[paper](https://arxiv.org/pdf/2306.13063)][[code](https://github.com/MiaoXiong2320/llm-uncertainty)]
   - Reducing conversational agents’ overconfidence through linguistic calibration. _Mielke, Sabrina J., et al._ Transactions of the Association for Computational Linguistics 10 (2022): 857-872. [[paper](https://direct.mit.edu/tacl/article/doi/10.1162/tacl_a_00494/112606/Reducing-Conversational-Agents-Overconfidence)][[data](https://parl.ai/projects/metacognition/)]
   - Teaching models to express their uncertainty in words. _Lin, Stephanie, Jacob Hilton, and Owain Evans._ arXiv preprint arXiv:2205.14334 (2022).[[paper](https://arxiv.org/pdf/2205.14334)][[code](https://github.com/sylinrl/calibratedmath)]
+
+
+- **Self-Consistency**
+  - Can llms express their uncertainty? an empirical evaluation of confidence elicitation in llms.  _Xiong, Miao, et al._ The Twelfth International Conference on Learning Representations (2024).[[paper](https://openreview.net/pdf?id=gjeQKFxFpZ)][[code](https://github.com/MiaoXiong2320/llm-uncertainty)]
+  - Self-consistency improves chain of thought reasoning in language models. _Wang, Xuezhi, et al._ The Eleventh International Conference on Learning Representations (2023). [[paper](https://openreview.net/pdf?id=1PL1NIMMrw)][[code](https://github.com/codelion/optillm/blob/main/optillm/self_consistency.py)]
 
 - **In-Context Learning**
   - Batch Calibration: Rethinking Calibration for In-Context Learning and Prompt Engineering. _Zhou, Han, et al._ The Twelfth International Conference on Learning Representations. 2024. [[paper](https://arxiv.org/pdf/2309.17249)][[code](https://github.com/cambridgeltl/ClaPS/blob/main/algs/test_time_bn.py)]
@@ -139,33 +155,10 @@ For **gpt-4 & gpt-4o-mini**, use the following command:
 - **Sequence-level Calibration**
   -  Analyzing uncertainty in neural machine translation. _Ott, Myle, et al._ International Conference on Machine Learning. PMLR, 2018. [[paper](https://arxiv.org/pdf/1803.00047)][[code](https://github.com/facebookresearch/analyzing-uncertainty-nmt)]
 
-#### White-Box Calibration
-- **Label Smoothing**
-  - On the inference calibration of neural machine translation. _Wang, Shuo, et al._ arXiv preprint arXiv:2005.00963 (2020).[[paper](https://arxiv.org/pdf/2005.00963)][[code](https://github.com/shuo-git/InfECE)]
-  - Calibration of pre-trained transformers. _Desai, Shrey, and Greg Durrett_ arXiv preprint arXiv:2003.07892 (2020). [[paper](https://arxiv.org/pdf/2003.07892)][[code](https://github.com/shreydesai/calibration)]
-  - When does label smoothing help? _Müller, Rafael, Simon Kornblith, and Geoffrey E. Hinton._ Advances in neural information processing systems 32 (2019). [[paper](https://arxiv.org/pdf/1906.02629v3)][[code](https://github.com/seominseok0429/label-smoothing-visualization-pytorch)]
-
-- **Fine-tuning**
-  - Calibrating sequence likelihood improves conditional language generation. _Zhao, Yao, et al._  The Eleventh International Conference on Learning Representations. 2023. [[paper](https://openreview.net/pdf?id=0qSOodKmJaN)]
-  - SLiC-HF: Sequence likelihood calibration with human feedback. _Zhao, Yao, et al._ arXiv preprint arXiv:2305.10425 (2023).[[paper](https://arxiv.org/pdf/2305.10425)][[huggingface](https://huggingface.co/papers/2305.10425)]
-  - How can we know when language models know? on the calibration of language models for question answering. _Jiang, Zhengbao, et al._ Transactions of the Association for Computational Linguistics 9 (2021): 962-977.[[paper](https://aclanthology.org/2021.tacl-1.57.pdf)][[code](https://github.com/jzbjyb/lm-calibration)]
-
 #### Calibration in Domain Shift and Adaptation (DA)
 
 - **TransCal**
   -  Transferable calibration with lower bias and variance in domain adaptation. _Wang, Ximei, et al._ Advances in Neural Information Processing Systems 33 (2020): 19212-19223. [[paper](https://papers.nips.cc/paper/2020/hash/df12ecd077efc8c23881028604dbb8cc-Abstract.html)][[code](https://github.com/thuml/TransCal)]
-
-### Selective Inference
-
-- **Surrogate Models**
-   - Llamas Know What GPTs Don't Show: Surrogate Models for Confidence Estimation. _Shrivastava, Vaishnavi, Percy Liang, and Ananya Kumar_  arXiv preprint arXiv:2311.08877 (2023).[[paper](https://arxiv.org/pdf/2311.08877)]
-
-- **Trust Score**
-  - To trust or not to trust a classifier. _Jiang, Heinrich, et al._ Advances in neural information processing systems 31 (2018).[[paper](https://arxiv.org/pdf/1805.11783)][[code](https://github.com/google/TrustScore)]
-
-## Usage
-
-_Coming soon_
 
 ## Contributing
 
