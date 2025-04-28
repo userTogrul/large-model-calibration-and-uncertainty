@@ -4,9 +4,9 @@
 # FROM CONSTANTS
 from src.constant_vals import QUALITATIVE_SCALE
 
-QA_FEW_SHOT_TEMPLATE = "Question: {question} Answer: {answer}"
+QA_FEW_SHOT_TEMPLATE = " Question: {question} Answer: {answer}"
 QA_OPEN_BOOK_TEMPLATE = (
-    "Context: {context}\n\n{cot_prompt}Question: {question}\nAnswer: " # there is a nextline character before
+    "Context: {context}\n\n{cot_prompt} Question: {question}\nAnswer: " # there is a nextline character before
 )
 QA_COT_PROMPT = "Briefly answer the following question by thinking step by step."
 QUANT_VERBALIZED_CONF_PROMPT = (

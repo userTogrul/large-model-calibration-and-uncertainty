@@ -4,7 +4,8 @@ import pandas as pd
 
 def eceloss(softmaxes, labels, n_bins=10):
     """
-    Modified from https://github.com/gpleiss/temperature_scaling/blob/master/temperature_scaling.py
+    Modified from:
+        https://github.com/gpleiss/temperature_scaling/blob/master/temperature_scaling.py
     """
     d = softmaxes.device
     bin_boundaries = torch.linspace(0, 1, n_bins + 1, device=d)

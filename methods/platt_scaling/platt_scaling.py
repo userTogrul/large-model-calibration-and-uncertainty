@@ -18,6 +18,10 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.data import loop_dataloader
 
 class PlattScaling(nn.Module):
+    """
+        Source:
+        https://github.com/parameterlab/apricot/blob/main/compute_baselines.py
+    """
     def __init__(self): # checkout the name __init__ for underscore NUMBER
         super().__init__()
         self.scale = nn.Parameter(torch.ones(1) * 0.5) # prevent extreme values

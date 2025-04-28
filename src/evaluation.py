@@ -8,42 +8,60 @@ import pandas as pd
 import torch, torchvision
 import torch.nn as nn
 import torch.optim as optim
-from transformers import AutoModelForSequenceClassification
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from methods.ece.ECE import eceloss_adapted, ece
 from methods.uce import UCE
 from sklearn.metrics import brier_score_loss, roc_auc_score # BS and AUROC
 from torcheval.metrics.functional import bleu_score # BLEU score
-
 from relplot.metrics import smECE_slow as SmECE # Smooth ECE metric from the paper
-from sklearn.isotonic import IsotonicRegression # isotonic regression
+
+"""
+    Loosely modified from:
+        https://github.com/parameterlab/apricot/blob/main/src/evaluation.py
+"""
 
 def check_answer_correctness(
-    correct_answers: List[str],
+    correct_answers: List[Union[str, List[str]]], # expect a str of correct answer per model answer -> List[List[str]]
     model_answers: List[str],
-    bleu_threshold: float = 0.3, # threshold for BLEU score
-) -> List[bool]:
-    global bleu_score
+    bleu_threshold: float = 0.25, # threshold for BLEU score, change to 0.2 if performance is bad
+    n_gram: int = 1, # BLEU n-gram level
+) -> Tuple[List[bool], List[float]]:
 
     results = []
+    scores = []
 
-    for correct_answer, model_answer in zip(correct_answers, model_answers):
+    for correct_answer, model_answer in zip( correct_answers, model_answers):
         try:
-            if (bleu_score( 
-                model_answer,
-                [correct_answer], 
-                n_gram=1,
-                # weights=torch.tensor([0.4, 0.4, 0.1, 0.1]) # more importance for 1 and 2-grams
-            ) >= bleu_threshold ) or (correct_answer in model_answer): # use the BLEU score to check if the model answer is correct
+            
+            if isinstance(correct_answer, str):
+                correct_answer = [correct_answer]
+            
+            score = bleu_score(
+                [model_answer], 
+                [correct_answer], # can be list of possible answers
+                n_gram=n_gram,
+            )
+            # Add the second criterion to accommodate CoT answers that might be longer and therefore obtain lower BLEU
+            # scores but are still correct.
+            if score >= bleu_threshold or any(correct_answer_sub in model_answer for correct_answer_sub in correct_answer): 
+                scores.append(score.item()) # Only count BLEU score on true label sequences. Type: torch.FloarTensor                
                 results.append(True)
             else:
+                # append no score when the model answer is incorrect
+                scores.append(0.0)
                 results.append(False)
-        except ValueError:
-            print("Model answer: ", model_answer)
-            print("Correct answer: ", correct_answer)
+
+        except ValueError as e:
+            print(f"Failed to evaluate BLEU score: {e}")
+            with open("log.txt", "a") as f:
+                f.write(f"BLEU score error: {e}\n")
+                f.write(f"Model answer: {model_answer}\n")
+                f.write(f"Correct answer: {correct_answer} \n") 
             results.append(False)
+            scores.append(0.0)
             continue
 
-    return results
+    return results, scores
 
 def extract_verbalized_confidence(
         expressions: List[str],
@@ -60,7 +78,7 @@ def extract_verbalized_confidence(
             expression_mapping is not None
         ), "'expression_mapping' has to be specified for qualitative mode."
     
-    confidences, successful = [], []
+    confidences, successful = [], [] # whether successfully able to extract confidences [SUCCESS RATE]
 
     for expression in expressions:
         if mode == "qualitative":
@@ -75,7 +93,7 @@ def extract_verbalized_confidence(
             successful.append(True)
             confidences.append(conf)
         
-        except AttributeError:
+        except AttributeError: # interesting error catch
             successful.append(False)
 
     return confidences, successful
@@ -85,6 +103,7 @@ def evaluate_confidences(
         all_confidences: List[float],
         all_correctness: List[int],
         all_targets: Optional[List[float]] = None,
+        all_scores: Optional[List[float]] = None,
         num_bins: int = 10,
         add_name: Optional[str] = None,
 ) -> Dict[str, float]:
@@ -97,15 +116,15 @@ def evaluate_confidences(
         infix = f"{add_name}_"
         
     metrics = {
-        f"{split_name}_{infix}ECE": ece(y_true=all_correctness, y_pred=all_confidences),
-        f"{split_name}_{infix}SmoothECE": SmECE(f=np.array(all_confidences), y=np.array(all_targets)),
-        f"{split_name}_{infix}Brier_Score": brier_score_loss(
-            y_true=all_correctness, y_prob=all_confidences
+        f"{split_name}_{infix}ece": ece(y_true=all_targets, y_pred=all_confidences),
+        f"{split_name}_{infix}smece": SmECE(f=np.array(all_confidences), y=np.array(all_targets)),
+        f"{split_name}_{infix}brier_score": brier_score_loss(
+            y_true=all_correctness, y_proba=all_confidences
         ),
-        f"{split_name}_{infix}AUROC": roc_auc_score(
+        f"{split_name}_{infix}auroc": roc_auc_score(
             y_true=all_correctness, y_score=all_confidences,
         ),
-        f"{split_name}_{infix}BLEU_accuracy": np.mean(all_correctness),
+        f"{split_name}_{infix}bleu": np.mean(all_scores),
     }
 
     return metrics
@@ -133,6 +152,8 @@ def get_target_function(
 
     grouped_by_bins = df.groupby("pred_bins")
     # calculate the mean of y and predicted probabilities for each bin
+    ############################################
     targets = grouped_by_bins.mean()["y"].values
+    ############################################
 
     return np.vectorize(lambda conf: targets[np.abs(conf - targets).argmin()]) # return the target function as a vectorized function

@@ -8,6 +8,7 @@ from copy import deepcopy
 import os # get the API key with that
 import warnings # showing warnings
 import dill
+import glob # to check the batch files
 import gc
 # EXTERNAL LIB
 import torch, torchvision
@@ -19,6 +20,7 @@ from transformers import (
      AutoTokenizer,
      AutoConfig,
      AutoModelForQuestionAnswering,
+     set_seed,
 )
 import pandas as pd
 import numpy as np
@@ -59,11 +61,7 @@ from src.constant_vals import (
 )
 from methods.platt_scaling.platt_scaling import PlattScaling
 from methods.temperature_scaling.temp_scaling import TemperatureScaling
-# metrics
-from methods.ece.ECE import eceloss, eceloss_adapted
-from methods.uce.UCE import uceloss
-from sklearn.metrics import brier_score_loss, roc_auc_score # BS and AUROC
-from relplot.metrics import smECE_slow as SmECE # Smooth ECE metric from the paper
+from sklearn.isotonic import IsotonicRegression # isotonic regression
 from src.data import load_experiment_dataset, unpack_dataloader, create_or_load_calibration_data, extract_black_box_calibration_data
 from src.evaluation import (
     get_target_function, 
@@ -99,6 +97,11 @@ except (ImportError, ModuleNotFoundError) as e:
 
 # HF
 os.environ['HF_HOME'] = HF_HOME
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+if torch.cuda.is_available():
+     torch.cuda.manual_seed(SEED)
+set_seed(SEED)
 
 def run_calibration_benchmark(
     model_name: str,
@@ -152,6 +155,10 @@ def run_calibration_benchmark(
         wandb_run: wandb_Run
             Weights & Biases run to log results. Default is None.
     """
+    """
+        Source:
+        https://github.com/parameterlab/apricot/blob/main/compute_baselines.py
+    """
     # Function for executing calibration experiments
     assert(
          "answer" not in input_parts or "cot_answer" not in input_parts
@@ -160,8 +167,7 @@ def run_calibration_benchmark(
          "qualitative" not in input_parts or "quantitative" not in input_parts
     ), "Choose either 'qualitative' or 'cot_anwer' for 'quantitative', not both."
     ##########
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+
     input_parts = list(sorted(input_parts))
     suffix = "_".join(input_parts)
     # Calibration dataloader path
@@ -174,7 +180,6 @@ def run_calibration_benchmark(
      ) # ?
     # calibration_target_file = os.path.join(calibration_data_dir, "calibration_targets.dill")
     timestamp = str(datetime.now().strftime("%d-%m-%Y (%H:%M:%S)"))
-    inputs_, question_ids = {}, {}
     calibration_data, included_questions = {}, {} # dictionary to hold the data for calibration
     # Pre-process the data
     data_split_names = list(DATASET_SPLIT_SIZES[dataset_name].keys())
@@ -222,9 +227,6 @@ def run_calibration_benchmark(
                #     model.resize_token_embedding(len(tokenizer))
               # Unpack the data loaders
               for split in data_split_names:
-                   inputs_[split], question_ids[split] = unpack_dataloader(
-                        data_loaders[split], tokenizer=tokenizer,
-                   )
                    calibration_data_path = os.path.join(calibration_data_dir, f"calibration_data_{split}.dill")
                    (
                         calibration_data[split],
@@ -240,7 +242,7 @@ def run_calibration_benchmark(
                    )
                # outside for loop
                # Free up memory after loading calibration data
-              del model, tokenizer, data_loaders
+              del model, data_loaders, tokenizer # do not delete the tokenizer for the calibration
               if torch.cuda.is_available():
                     torch.cuda.empty_cache()
               gc.collect()
@@ -269,64 +271,77 @@ def run_calibration_benchmark(
          pass
     
     # Do scaling methods for calibration
-    temperature_scalers = {}
-    for method in ["ps_seq_likelihood", "ts_seq_likelihood"]:
-
-         train_likelihoods = np.array(
-               [
-                    question_data["seq_likelihood"]
-                    for question_data in calibration_data["train"].values()
-               ]
-          )
-         train_likelihoods[np.isnan(train_likelihoods)] = 0
-         train_correctness = [
-               question_data["accuracy"] for question_data in calibration_data["train"].values()
-         ]
-         # Compute targets
-         train_target_func = get_target_function(
-              train_likelihoods, 
-              train_correctness
-          )
-         train_likelihoods = torch.FloatTensor(train_likelihoods)
-         train_targets = torch.FloatTensor(train_target_func(train_likelihoods))
-
+    parametric_scalers = {}
+    nonparametric_scalers = {}
+    for method in ["ps_seq_likelihood", "ts_seq_likelihood", "ir_seq_likelihood"]:
+         
          if method in baseline_methods:
-              
-              # Platt Scaling
-              if method == "ps_seq_likelihood":
-                   print(f"Doing platt scaling for {method}")
-                   scaler = PlattScaling()
-                   scaler.train_parameters(
-                        train_probabilities=train_likelihoods,
-                        train_targets=train_targets,
-                        batch_size=calibration_batch_size,
-                        learning_rate=calibration_learning_rate,
-                        num_steps=calibration_num_steps,
-                   )
-                   temperature_scalers[method] = scaler   
+               train_likelihood_name = "seq_likelihood"
+               train_likelihoods = np.array(
+                    [
+                         question_data[train_likelihood_name]
+                         for question_data in calibration_data["train"].values()
+                    ]
+               )
+               train_likelihoods[np.isnan(train_likelihoods)] = 0
+               train_correctness = [
+                    question_data["accuracy"] for question_data in calibration_data["train"].values()
+               ]
+               # Compute targets or accuracy per bin
+               train_target_func = get_target_function(
+                    train_likelihoods, 
+                    train_correctness
+               )
+
+               train_likelihoods = torch.FloatTensor(train_likelihoods)
+               train_targets = torch.FloatTensor(train_target_func(train_likelihoods))
+               
+               # Platt Scaling
+               if method == "ps_seq_likelihood":
+                    print(f"Doing platt scaling for {method}")
+                    scaler = PlattScaling()
+                    scaler.train_parameters(
+                         train_probabilities=train_likelihoods,
+                         train_targets=train_targets,
+                         batch_size=calibration_batch_size,
+                         learning_rate=calibration_learning_rate,
+                         num_steps=calibration_num_steps,
+                    )
+                    parametric_scalers[method] = scaler   
 
                # Temp Scaling
-              if method == "ts_seq_likelihood":
+               if method == "ts_seq_likelihood":
+                    print(f"Doing temperature scaling for {method}")
+                    scaler = TemperatureScaling()
+                    scaler.train_parameters(
+                         train_probabilities=train_likelihoods,
+                         train_targets=train_targets,
+                         batch_size=calibration_batch_size, # use fullbatch for L-BFGS 
+                         learning_rate=calibration_learning_rate,
+                         num_steps=calibration_num_steps,
+                    )
+                    parametric_scalers[method] = scaler
 
-                   print(f"Doing temperature scaling for {method}")
-                   scaler = TemperatureScaling()
-                   scaler.train_parameters(
-                        train_probabilities=train_likelihoods,
-                        train_targets=train_targets,
-                        batch_size=DATASET_SPLIT_SIZES[dataset_name]["train"], # use fullbatch for L-BFGS 
-                        learning_rate=calibration_learning_rate,
-                        num_steps=calibration_num_steps,
-                   )
-                   temperature_scalers[method] = scaler   
-
-    # BASELINE RESULTS
+               # Isotonic regression
+               if method == "ir_seq_likelihood":
+                    print(f"Doing isotonic regression for {method}")
+                    scaler = IsotonicRegression(out_of_bounds='clip')
+                    scaler.fit(
+                         train_likelihoods,
+                         train_targets,
+                    )
+                    nonparametric_scalers[method] = scaler   
+    #############################
+    ## FINAL BASELINE RESULTS  ##
+    #############################
     baseline_confidences = defaultdict(dict) # 
     baseline_results = {}
     masks = defaultdict(dict) # For qualitative verbalization
 
     for method in baseline_methods:
          for split_name in data_split_names:
-              if "test" not in split_name:
+              
+              if "test" not in split_name: # Only evaluate on the test split
                    continue
               
               split_data = calibration_data[split_name]
@@ -351,11 +366,24 @@ def run_calibration_benchmark(
               baseline_confidences[split_name]["cot_seq_likelihood"] = cot_likelihoods
 
               # Parametric scaling methods
-              if method in ["ps_seq_likelihood", "ts_seq_likelihood"]:
-                   scaler = temperature_scalers[method]
+              if method in ["ps_seq_likelihood", "ts_seq_likelihood", "ir_seq_likelihood"]:
+                   
+                   if method == "ir_seq_likelihood":
+                        scaler = nonparametric_scalers[method]
+                   else:
+                        scaler = parametric_scalers[method]
+                   
                    inputs = torch.FloatTensor(likelihoods)
+                   outputs = []
+                   # TODO
                    with torch.no_grad():
-                        outputs = scaler.forward(inputs).numpy()
+                        
+                        if method == "ps_seq_likelihood":
+                             outputs = scaler.forward(inputs).numpy()
+                        elif method == "ts_seq_likelihood":                              
+                             outputs = np.array(scaler.forward(inputs))
+                        elif method == "ir_seq_likelihood":
+                             outputs = np.array(scaler.transform(inputs))
 
                    baseline_confidences[split_name][method] = outputs
                    # Compute accuracy
@@ -396,21 +424,39 @@ def run_calibration_benchmark(
                         question_data["accuracy"]
                         for question_data in calibration_data[split_name].values()
                    ]
-              )
+               )
+              eval_score = np.array(
+                    [
+                         question_data["score"]
+                         for question_data in calibration_data[split_name].values()
+                    ]
+               )
+              
+              if "cot" in baseline_name:
+                    correctness = np.array(
+                         [
+                              question_data["cot_accuracy"]
+                              for question_data in calibration_data[split_name].values()
+                         ]
+                    )
+                    eval_score = np.array(
+                         [
+                              question_data["cot_score"]
+                              for question_data in calibration_data[split_name].values()
+                         ]
+                    )
 
               if baseline_name in masks[split_name]:
                    baseline_mask = masks[split_name][baseline_name]
-                   baseline_results[f"{split_name}_{baseline_name}_success"] = np.mean(
-                        baseline_mask.astype(int)
-                   )
-
+                   baseline_results[f"{split_name}_{baseline_name}_success"] = np.mean(baseline_mask.astype(int))
                    correctness = correctness[baseline_mask]
           
-              baseline_res = evaluate_confidences( # TODO: Check this
+              baseline_res = evaluate_confidences(
                     split_name=split_name,
                     add_name=baseline_name,
                     all_confidences=confidences,
                     all_correctness=correctness,
+                    all_scores=eval_score,
                )
               baseline_results.update(baseline_res)
               eval_data[baseline_name][split_name] = {
@@ -484,13 +530,13 @@ def run_calibration_benchmark(
                    if f"_{eval_metric}" in name and any(
                         [f"{split}_{baseline_name}" in name for split in test_splits]
                    ):
-                        results_df.at[baseline_name, eval_metric] = round(result, 2)
+                        results_df.at[baseline_name, eval_metric] = round(result, 3)
                         break
                    
     print(results_df)
-    print(results_df.to_latex(float_format="%.4f"))
+    print(results_df.to_latex(float_format="%.3f"))
     for name, result in baseline_results.items():
-         print(f"{name}: {result:.4f}")
+         print(f"{name}: {result:.3f}")
 
     # Log to wandb
     if wandb_run is not None:

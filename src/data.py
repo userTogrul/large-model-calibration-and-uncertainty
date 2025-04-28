@@ -36,6 +36,7 @@ from src.constant_vals import (
     END_OF_GENERATION_TOKENS,
     HF_HOME,
     HF_CACHE_DIR,
+    SEED,
 )
 from src.prompts import (
     QA_FEW_SHOT_TEMPLATE, 
@@ -138,11 +139,13 @@ def extract_black_box_calibration_data(
     split: str,
     data_dir: str,
     dataset_name: str,
-    source_data_model_name: str="meta-llama/Llama-3.1-8B-Instruct",
+    source_data_model_name: str="mistralai/Mistral-7B-Instruct-v0.3",
 ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     """
         Extracts the calibration data from the source data model
         and saves it to a file.
+        Loosely based on:
+            https://github.com/parameterlab/apricot/blob/main/get_openai_data.py
     """
     source_data_dir = os.path.join(
         data_dir,
@@ -183,34 +186,39 @@ def extract_black_box_calibration_data(
     )
 
     open_ai_calibration_data = {}
+    num_promptokens_qa = 0
+    num_compltokens_qa = 0
+    num_promptokens_cot = 0
+    num_compltokens_cot = 0
+    num_promptokens_qual = 0
+    num_compltokens_qual = 0
+    num_promptokens_qualcot = 0
+    num_compltokens_qualcot = 0
+    sample_error = 0
     
-    try:
-        calibration_split_path = os.path.join(
-            calibration_data_dir, f"calibration_data_{split}.dill"
-        )
+    calibration_split_path = os.path.join(
+        calibration_data_dir, f"calibration_data_{split}.dill"
+    )
 
-        if os.path.exists(calibration_split_path):
-            print(f"Found existing data for {split} split, skipping.")
-            with open(calibration_split_path, "rb") as f:
-                open_ai_calibration_data = dill.load(f)
-            return open_ai_calibration_data
+    if os.path.exists(calibration_split_path):
+        print(f"Found existing data for {split} split, skipping.")
+        with open(calibration_split_path, "rb") as f:
+            open_ai_calibration_data = dill.load(f)
+        return open_ai_calibration_data
 
+    calibration_data = split_calibration_data[split]
 
-        calibration_data = split_calibration_data[split]
+    if calibration_data["included_questions"] is not None:
         del calibration_data["included_questions"]
-
-        num_promptokens_qa = 0
-        num_compltokens_qa = 0
-        num_promptokens_cot = 0
-        num_compltokens_cot = 0
-        num_promptokens_qualcot = 0
-        num_compltokens_qualcot = 0
-
-        for question_id, question_data in tqdm(
-            calibration_data.items(), total=len(calibration_data)
-        ):
+    
+    for question_id, question_data in tqdm(
+        calibration_data.items(), total=len(calibration_data)
+    ):
+        try:
             question = question_data["question"]
+            safe_question = f"The following content is experimental, do not answer if the question violates content management policy of Azure OpenAI: {question}"
             question_in_context = question_data["question_in_context"]
+            safe_question_in_context = f"The following content is experimental, do not answer if the question violates content management policy of Azure OpenAI: {question_in_context}"
             gold_answer = question_data["gold_answer"]
             open_ai_question_data = {
                 "question": question,
@@ -218,109 +226,199 @@ def extract_black_box_calibration_data(
                 "gold_answer": gold_answer,
             }
 
-            # Get normal model answer
-            answer_completion = client.chat.completions.create(
-                model = model_name,
-                messages = [
-                    {"role": "user", "content": question_in_context}
-                ],
-                logprobs = True,
-            )
-            num_promptokens_qa += answer_completion.usage.prompt_tokens
-            num_compltokens_qa += answer_completion.usage.completion_tokens
-
-            answer = answer_completion.choices[0].message.content
-            answer_likelihood = np.exp(
-                np.mean(
-                    [
-                        lp.logprob 
-                        for lp in answer_completion.choices[0].logprobs.content
-                    ]
-                )
-            )
-            # Get model answer with CoT prompt
-            cot_answer_completion = client.chat.completions.create(
-                model = model_name,
-                messages=[
-                    {"role": "system", "content": QA_COT_PROMPT},
-                    {"role": "user", "content": question},
-                ],
-                logprobs = True,
-            )
-            num_promptokens_cot += cot_answer_completion.usage.prompt_tokens
-            num_compltokens_cot += cot_answer_completion.usage.completion_tokens
-            cot_answer = cot_answer_completion.choices[0].message.content
-            cot_answer_likelihood = np.exp(
-                np.mean(
-                    [
-                        lp.logprob for lp in cot_answer_completion.choices[0].logprobs.content
-                    ]
-                )
-            )
-            # ask for verbalized confidence
-            cot_qual_uncertainty_completion = client.chat.completions.create(
+            if model_name == "deepseek-reasoner":
+                answer_completion = client.chat.completions.create(
                     model = model_name,
                     messages = [
-                        {"role": "user", "content": question},
-                        {"role": "assistant", "content": cot_answer},
-                        {
-                            "role": "user",
-                            "content": QUAL_VERBALIZED_CONF_PROMPT
-                        },
+                        {"role": "user", "content": safe_question_in_context}
                     ],
-                    max_completion_tokens=10, # ?
+                    seed=SEED,
+                )
+                num_promptokens_qa += answer_completion.usage.prompt_tokens
+                num_compltokens_qa += answer_completion.usage.completion_tokens
+                answer = answer_completion.choices[0].message.content
+
+                if answer is None:
+                    answer = "No answer provided by the model."
+                
+                answer_likelihood = 0.0
+                # Get model answer with CoT prompt
+                cot_answer_completion = client.chat.completions.create(
+                    model = model_name,
+                    messages=[
+                        {"role": "system", "content": QA_COT_PROMPT},
+                        {"role": "user", "content": safe_question},
+                    ],
+                    seed=SEED,
+                )
+                num_promptokens_cot += cot_answer_completion.usage.prompt_tokens
+                num_compltokens_cot += cot_answer_completion.usage.completion_tokens
+                cot_answer = cot_answer_completion.choices[0].message.content
+
+                if cot_answer is None:
+                    cot_answer = "No answer provided by the model."
+
+                cot_answer_likelihood = 0.0
+            elif "gpt" in model_name:
+                # Sequence likelihoods
+                # Get normal model answer
+                answer_completion = client.chat.completions.create(
+                    model = model_name,
+                    messages = [
+                        {"role": "user", "content": safe_question_in_context}
+                    ],
+                    logprobs = True,
+                    seed=SEED,
+                )
+                num_promptokens_qa += answer_completion.usage.prompt_tokens
+                num_compltokens_qa += answer_completion.usage.completion_tokens
+                answer = answer_completion.choices[0].message.content
+
+                if answer is None:
+                    answer = "No answer provided by the model."
+                
+                answer_likelihood = np.exp(
+                    np.mean(
+                        [
+                            lp.logprob 
+                            for lp in answer_completion.choices[0].logprobs.content
+                        ]
+                    )
+                )
+                # Get model answer with CoT prompt
+                cot_answer_completion = client.chat.completions.create(
+                    model = model_name,
+                    messages=[
+                        {"role": "system", "content": QA_COT_PROMPT},
+                        {"role": "user", "content": safe_question},
+                    ],
+                    logprobs = True,
+                    seed=SEED,
+                )
+                num_promptokens_cot += cot_answer_completion.usage.prompt_tokens
+                num_compltokens_cot += cot_answer_completion.usage.completion_tokens
+                cot_answer = cot_answer_completion.choices[0].message.content
+
+                if cot_answer is None:
+                    cot_answer = "No answer provided by the model."
+                
+                cot_answer_likelihood = np.exp(
+                    np.mean(
+                        [
+                            lp.logprob for lp in cot_answer_completion.choices[0].logprobs.content
+                        ]
+                    )
+                )
+            
+            # ask for verbalized confidence
+            qual_uncertainty_completion = client.chat.completions.create(
+                model = model_name,
+                messages = [
+                    {"role": "user", "content": safe_question},
+                    {"role": "assistant", "content": answer},
+                    {
+                        "role": "user",
+                        "content": QUAL_VERBALIZED_CONF_PROMPT
+                    },
+                ],
+                max_tokens=10,
+                seed=SEED,
             )
+            # Calculate the number of tokens
+            num_promptokens_qual += qual_uncertainty_completion.usage.prompt_tokens
+            num_compltokens_qual += qual_uncertainty_completion.usage.completion_tokens
+            # Get the verbalized confidence
+            qual_uncertainty = (
+                qual_uncertainty_completion.choices[0].message.content
+            )
+            # Get model answer with CoT prompt   
+            # ask for verbalized confidence
+            cot_qual_uncertainty_completion = client.chat.completions.create(
+                model = model_name,
+                messages = [
+                    {"role": "user", "content": safe_question},
+                    {"role": "assistant", "content": cot_answer},
+                    {
+                        "role": "user",
+                        "content": QUAL_VERBALIZED_CONF_PROMPT
+                    },
+                ],
+                max_tokens=10,
+                seed=SEED,
+            )
+            # Calculate the number of tokens
             num_promptokens_qualcot += cot_qual_uncertainty_completion.usage.prompt_tokens
             num_compltokens_qualcot += cot_qual_uncertainty_completion.usage.completion_tokens
+            # Get the verbalized confidence
             cot_qual_uncertainty = (
                 cot_qual_uncertainty_completion.choices[0].message.content
             )
             # Check answer correctness
-            answer_correctness, cot_answer_correctness = check_answer_correctness(
-                correct_answers=[gold_answer] * 2,
-                model_answers=[answer, cot_answer],
+            (answer_correctness, cot_answer_correctness), (answer_score, cot_answer_score) = check_answer_correctness(
+                    correct_answers=[gold_answer] * 2,
+                    model_answers=[answer, cot_answer],
             )
             open_ai_question_data.update(
                 {
                     "answer": answer,
                     "seq_likelihood": answer_likelihood,
                     "accuracy": int(answer_correctness),
+                    "score": float(answer_score),
                     "cot_answer": cot_answer,
                     "cot_accuracy": int(cot_answer_correctness),
+                    "cot_score": float(cot_answer_score),
                     "cot_seq_likelihood": cot_answer_likelihood,
                     "verbalized_cot_qual": cot_qual_uncertainty,
+                    "verbalized_qual": qual_uncertainty,
                 }
             )
             
-            assert question_data.keys() == open_ai_question_data.keys(), (
-                f"Some of the fields are missing for this question:"
-                f"{', '.join(list(set(question_data.keys()) - set(open_ai_question_data.keys())))}"
-            )
+            # assert question_data.keys() == open_ai_question_data.keys(), (
+            #     f"Some of the fields are missing for this question:"
+            #     f"{', '.join(list(set(question_data.keys()) - set(open_ai_question_data.keys())))}"
+            # )
 
             open_ai_calibration_data[question_id] = open_ai_question_data
             time.sleep(0.1) # sleep for 0.1 seconds to avoid rate limiting
-    except HTTPStatusError:
-        print("Rate limited, exiting.")
-        calibration_split_path = os.path.join(
-            calibration_data_dir, f"calibration_data_{split}.dill"
-        )
-    except openai.AuthenticationError as e:
-        print(f"API Connection Error: {e}")
-    finally:
+        except openai.AuthenticationError as e:
+            print(f"API Connection Error: {e}")    
+        except HTTPStatusError:
+            print("Rate limited, exiting.")
+        except openai.RateLimitError as e:
+            print("A 429 status code was received; we should back off a bit.")
+        except openai.BadRequestError as e:
+            print(f"Bad sample: {e}")
+            print("Question: ", question)
+            print(safe_question_in_context)
+            sample_error += 1
+            with open("log.txt", "a") as f:
+                f.write(f"Bad question: {question}\n")
+                f.write(f"Question in context: {safe_question_in_context}\n")
+                f.write(f"Gold Answer: {gold_answer}\n")
+                f.write(f"Question ID: {question_id} \n")
+            continue
+        except openai.APIStatusError as e:
+            print(f"Another non-200-range status code was received: {e.status_code}")
+            print(e)
 
-        if len(open_ai_calibration_data) > 0:
-            print(f'#Prompt_tokens by API: {num_promptokens_qa}')
-            print(f'#Competion_tokens by API: {num_compltokens_qa}')
-            print(f'CoT #Prompt_tokens by API: {num_promptokens_cot}')
-            print(f'CoT #Competion_tokens by API: {num_compltokens_cot}')
-            print(f'Verb+Qual+CoT #Prompt_tokens by API: {num_promptokens_qualcot}')
-            print(f'Verb+Qual+CoT #Competion_tokens by API: {num_compltokens_qualcot}')
-            # save the calibration data to a file
-            with open(calibration_split_path, "wb") as f:
-                dill.dump(open_ai_calibration_data, f)
+    if len(open_ai_calibration_data) > 0:
+        with open("log.txt", "a") as f:
+            f.write(f"OpenAI model on {split}")
+            f.write(f'#Prompt_tokens by API: {num_promptokens_qa}')
+            f.write(f'#Competion_tokens by API: {num_compltokens_qa}')
+            f.write(f'CoT #Prompt_tokens by API: {num_promptokens_cot}')
+            f.write(f'CoT #Competion_tokens by API: {num_compltokens_cot}')
+            f.write(f'Verb+Qual+CoT #Prompt_tokens by API: {num_promptokens_qualcot}')
+            f.write(f'Verb+Qual+CoT #Competion_tokens by API: {num_compltokens_qualcot}')
+            f.write(f'Verb+Qual #Prompt_tokens by API: {num_promptokens_qual}')
+            f.write(f'Verb+Qual #Competion_tokens by API: {num_compltokens_qual}')
+            f.write(f"Harmful sample count: {sample_error}\n")
 
-        return open_ai_calibration_data
+        # save the calibration data to a file
+        with open(calibration_split_path, "wb") as f:
+            dill.dump(open_ai_calibration_data, f)
 
+    return open_ai_calibration_data
 
     # for chunk in chat_completion_stream:
     #     if chunk.choices[0].delta.content is not None:
@@ -335,6 +433,10 @@ def extract_model_calibration_data(
     max_input_length: int = MAX_INPUT_LENGTH,
     max_samples: Optional[int] = None,
 ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """
+        Loosely based on:
+            https://github.com/parameterlab/apricot/blob/main/src/calibration.py
+    """
     
     calibration_data = {}
     eos_token_ids = {} 
@@ -356,9 +458,11 @@ def extract_model_calibration_data(
             [tokenizer(eos_token)["input_ids"][1]] for eos_token in END_OF_GENERATION_TOKENS # 
         ]
 
-    if model.__class__.__name__ == "Qwen2ForCausalLM":
+    if model.__class__.__name__ == "Qwen2ForCausalLM": # fix for Qwen2.5
         eos_token_ids = [
-            [tokenizer(eos_token)["input_ids"][0]] for eos_token in END_OF_GENERATION_TOKENS # 
+            [tokenizer(eos_token)["input_ids"][0]] 
+            if len(tokenizer(eos_token)["input_ids"]) == 1 
+            else [tokenizer(eos_token)["input_ids"][1]] for eos_token in END_OF_GENERATION_TOKENS # 
         ]
     
     try:
@@ -415,13 +519,16 @@ def extract_model_calibration_data(
         # generate sequence likelihoods
         generated_answer_ids = outputs["sequences"][
             :, inputs.shape[1] :
-        ].squeeze(0) # extract only output sequence ids, starting from the input length to the end.
+        ].squeeze(0) # extract only output sequence ids, starting from the input length to the end. [batch_size, sequence_length]
         predictions = torch.log(
-            F.softmax(torch.stack(
-                outputs["scores"], dim=1), 
+            F.softmax(
+                torch.stack(
+                    outputs["scores"],# Each element in outputs["scores"] has shape [batch_size, vocab_size].
+                    dim=1
+                ), # Stacks the list of logits tensors along a new dimension (time steps), resulting in a tensor of shape [batch_size, sequence_length_generated, vocab_size]
                 dim=-1
             ) # Apply softmax to the last dim (vocabulary size)
-        )
+        ) # [batch_size, sequence_length_generated, vocab_size]
         log_probs = torch.gather(
             predictions,
             dim=-1,
@@ -436,7 +543,7 @@ def extract_model_calibration_data(
                 dim=-1,
             ),
             dim=-1,
-        ).long() # this line converts bool tensor to long tensor (1s and 0s)
+        ).long() # this line converts bool tensor to long tensor (1s and 0s) [batch_size, sequence_length_generated]
         num_tokens = token_mask.sum(dim=-1) # count the number of tokens, Since token_mask is a 1D tensor, dim=-1 sums over the entire tensor.
         seq_likelihoods = (log_probs * token_mask).sum(-1) / num_tokens # calculate the average log probability, Averaging allows for comparison across sequences of different lengths.
         seq_likelihoods = torch.exp(seq_likelihoods) # convert average lop probs to average pertoken  probability exponential
@@ -484,13 +591,22 @@ def extract_model_calibration_data(
             cot_generated_answer_ids, 
             skip_special_tokens=True # remove the special tokens
         )
+
+        # for TruthfulQA
+        if "correct_answers" in batch:
+            answer_column = "correct_answers"
+            batch_size = len(batch[answer_column][0]) # should be 32
+            batch[answer_column] = [[answers[ans_idx] for answers in batch[answer_column]] for ans_idx in range(batch_size)]
+        else:
+            answer_column = "answer"
+
         #check correctness
-        answer_correctness = check_answer_correctness(
-            correct_answers=batch["answer"],
+        answer_correctness, answer_scores = check_answer_correctness(
+            correct_answers=batch[answer_column],
             model_answers=model_answers,
         )
-        cot_answers_correctness = check_answer_correctness(
-            correct_answers=batch["answer"],
+        cot_answers_correctness, cot_answer_scores = check_answer_correctness(
+            correct_answers=batch[answer_column],
             model_answers=cot_model_answers,
         )
         # Qualitative verbalized uncertainty with CoT
@@ -534,7 +650,7 @@ def extract_model_calibration_data(
                 )
         
         included_questions += batch["question_id"]
-
+        
         # Create the calibration data 
         for(
             question_id,
@@ -543,8 +659,10 @@ def extract_model_calibration_data(
             model_answer,
             gold_answer,
             correctness,
+            answer_score,
             cot_model_answer,
             cot_correctness,
+            cot_score,
             verbalized_cot_qual,
             seq_likelihood,
             cot_seq_likelihood
@@ -553,17 +671,21 @@ def extract_model_calibration_data(
             batch["question"],
             questions_in_context,
             model_answers,
-            batch["answer"],
+            batch[answer_column],
             answer_correctness,
+            answer_scores,
             cot_model_answers,
             cot_answers_correctness,
+            cot_answer_scores,
             verbalized_uncertainties["cot_qual"],
             seq_likelihoods,
             cot_seq_likelihoods,
         ):
             calibration_data[question_id] = {
                 "accuracy": int(correctness),
+                "score": float(answer_score),
                 "cot_accuracy": int(cot_correctness),
+                "cot_score": float(cot_score),
                 "gold_answer": gold_answer,
                 "answer": model_answer,
                 "cot_answer": cot_model_answer,
@@ -589,17 +711,18 @@ def create_or_load_calibration_data(
 ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     
     if not os.path.exists(data_path):
+        
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        
         calibration_data, included_questions = extract_model_calibration_data(
             model=model,
             tokenizer=tokenizer,
             calibration_split=data_loader,
             device=device,
-            max_samples=max_samples
+            max_samples=max_samples,
         )
         calibration_data["included_questions"] = included_questions
-
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
 
         with open(data_path, "wb") as calibration_file:
             dill.dump(calibration_data, calibration_file)
@@ -615,9 +738,9 @@ def create_or_load_calibration_data(
     return calibration_data, included_questions
 
 ########################################
-######GENERATE INPUTS###################
+############GENERATE INPUTS#############
 ########################################
-# Create a preprocess_batch_wrapper for TruthfulQA dataset
+
 def preprocess_batch_wrapper(
     train_data: Dataset,
     num_in_context_samples: int,
@@ -626,6 +749,10 @@ def preprocess_batch_wrapper(
 ) -> Callable:
     """
         Closure for the process batch function that makes a certain variables available to the function scope.
+
+        Loosely based on:
+            https://github.com/parameterlab/apricot/blob/main/src/data.py
+
     """
 
     def preprocess_batch(batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
@@ -661,7 +788,7 @@ def preprocess_batch_wrapper(
         
         # Qwen adaptation for English
         batch_with_prompt = [
-            few_shot_prompt + "Question: " + question + " Your response should only be in english and no other language." + " Answer: "
+            few_shot_prompt + " Question: " + question + " Your response should only be in english and no other language." + " Answer: "
             for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
         ]
         batch_with_cot_prompt = [
@@ -701,6 +828,7 @@ def preprocess_batch_wrapper(
     
     return preprocess_batch
 
+# Create a preprocess_batch_wrapper for TruthfulQA dataset
 def preprocess_batch_wrapper_truthful_qa(
     train_data: Dataset,
     num_in_context_samples: int,
@@ -715,12 +843,22 @@ def preprocess_batch_wrapper_truthful_qa(
         """
             Process a specific batch of TruthfulQA.
         """
-        answer_field = "best_answer"
-
+        answer_field = "best_answer" if "best_answer" in batch else "answer"
         answers = [
             str(answer) if not isinstance(answer, dict) else answer["value"]
             for answer in batch[answer_field]
-        ] 
+        ]
+        correct_answers_field = "correct_answers" if "correct_answers" in batch else "answer"
+        correct_answers = []
+        for batch_answers in batch[correct_answers_field]:
+            current_length = len(batch_answers)
+            append_batch_answers = batch_answers
+
+            if len(batch_answers) < 12:
+                append_batch_answers.extend([""] * (12 - current_length))
+            
+            correct_answers.append(append_batch_answers)
+
 
         # select few-shot examples
         few_shot_prompts = []
@@ -744,7 +882,7 @@ def preprocess_batch_wrapper_truthful_qa(
             few_shot_prompts.append(few_shot_prompt)
         
         batch_with_prompt = [
-            few_shot_prompt + "Question: " + question + " Your response should only be in english and no other language." + " Answer:"
+            few_shot_prompt + " Question: " + question + " Your response should only be in english and no other language." + " Answer:"
             for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
         ]
         batch_with_cot_prompt = [
@@ -769,7 +907,8 @@ def preprocess_batch_wrapper_truthful_qa(
         batch["attention_mask"] = inputs.attention_mask
         batch["cot_input_ids"] = cot_inputs.input_ids
         batch["cot_attention_mask"] = cot_inputs.attention_mask
-        batch["answer"] = answers
+        batch["best_answer"] = answers
+        batch["correct_answers"] = correct_answers
 
         # Generate question IDs for OOD test set
         if "question_id" not in batch:
@@ -898,6 +1037,30 @@ def preprocess_trivia_qa(
 
     return data_loaders
 
+# def collated_function(x):
+#     """
+#     Collate function for DataLoader. This function is responsible for processing the input data and returning a batch.
+#     """
+#     # if "correct_answers" in x:
+#     #     return tuple(x["correct_answers"])
+#     input_ids = [item["input_ids"] for item in x]
+#     attention_masks = [item["attention_mask"] for item in x]
+#     cot_input_ids = [item["cot_input_ids"] for item in x]
+#     cot_attention_masks = [item["cot_attention_mask"] for item in x]
+
+#     return {
+#         "input_ids": torch.tensor(input_ids),
+#         "attention_mask": torch.tensor(attention_masks),
+#         "cot_input_ids": torch.tensor(cot_input_ids),
+#         "cot_attention_mask": torch.tensor(cot_attention_masks),
+#         "type": [item["type"] for item in x],
+#         "category":[item["category"] for item in x],
+#         "question": [item['question'] for item in x],
+#         "best_answer": [item['best_answer'] for item in x],
+#         "correct_answers": [item['correct_answers'] for item in x],
+#         "question_id": [item['question_id'] for item in x],
+#     }
+
 def preprocess_truthful_qa(
     model_name: str,
     num_in_context_samples: int,
@@ -946,7 +1109,7 @@ def preprocess_truthful_qa(
             if os.path.exists(data_loader_path):
                 continue
 
-            remove_columns = ["source"]
+            remove_columns = ["incorrect_answers", "source"]
 
             data_split = data_split.map(
                 # Create processing function by making variables available in the closure
@@ -989,12 +1152,6 @@ def preprocess_truthful_qa(
     }
 
     return data_loaders
-
-# LATER 
-def preprocess_sciq():    
-    dataset = load_dataset("sciq")
-    name = "sciq"
-    save_to_csv(dataset, name)
 
 def load_experiment_dataset(
     model_name: str,
