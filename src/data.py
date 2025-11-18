@@ -27,7 +27,6 @@ from transformers import (
      AutoModelForSequenceClassification,
      AutoModelForQuestionAnswering,
 )
-from optimum.bettertransformer import BetterTransformer
 from datasets import load_dataset, Dataset
 # Local
 from src.constant_vals import (
@@ -51,6 +50,8 @@ from secret import (
     BASE_URL,
     OPENAI_API_KEY,
 )
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+os.environ["BASE_URL"] = BASE_URL
 os.environ['HF_HOME'] = HF_HOME
 
 def unpack_dataloader(
@@ -169,16 +170,15 @@ def extract_black_box_calibration_data(
                 os.path.join(source_data_dir, f"calibration_data_{split}.dill")
             ):
         raise FileNotFoundError(
-            "Some of the necessary files have not been found. Please first generate files with white-box model."
+            "Some of the necessary files have not been found. Please first generate files with open-box model."
         )
 
-    else:
-        split_calibration_data = {}
+    split_calibration_data = {}
 
-        with open(
-            os.path.join(source_data_dir, f"calibration_data_{split}.dill"), "rb"
-        ) as f:
-            split_calibration_data[split] = dill.load(f)
+    with open(
+        os.path.join(source_data_dir, f"calibration_data_{split}.dill"), "rb"
+    ) as f:
+        split_calibration_data[split] = dill.load(f)
     
     client = OpenAI(
         api_key=OPENAI_API_KEY,
@@ -195,6 +195,7 @@ def extract_black_box_calibration_data(
     num_promptokens_qualcot = 0
     num_compltokens_qualcot = 0
     sample_error = 0
+    error_log = []
     
     calibration_split_path = os.path.join(
         calibration_data_dir, f"calibration_data_{split}.dill"
@@ -226,7 +227,7 @@ def extract_black_box_calibration_data(
                 "gold_answer": gold_answer,
             }
 
-            if model_name == "deepseek-reasoner":
+            if "deepseek" in model_name:
                 answer_completion = client.chat.completions.create(
                     model = model_name,
                     messages = [
@@ -358,6 +359,7 @@ def extract_black_box_calibration_data(
                     correct_answers=[gold_answer] * 2,
                     model_answers=[answer, cot_answer],
             )
+            
             open_ai_question_data.update(
                 {
                     "answer": answer,
@@ -372,11 +374,6 @@ def extract_black_box_calibration_data(
                     "verbalized_qual": qual_uncertainty,
                 }
             )
-            
-            # assert question_data.keys() == open_ai_question_data.keys(), (
-            #     f"Some of the fields are missing for this question:"
-            #     f"{', '.join(list(set(question_data.keys()) - set(open_ai_question_data.keys())))}"
-            # )
 
             open_ai_calibration_data[question_id] = open_ai_question_data
             time.sleep(0.1) # sleep for 0.1 seconds to avoid rate limiting
@@ -420,10 +417,6 @@ def extract_black_box_calibration_data(
 
     return open_ai_calibration_data
 
-    # for chunk in chat_completion_stream:
-    #     if chunk.choices[0].delta.content is not None:
-    #         print(chunk.choices[0].delta.content, end="")
-
 def extract_model_calibration_data(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
@@ -465,12 +458,6 @@ def extract_model_calibration_data(
             else [tokenizer(eos_token)["input_ids"][1]] for eos_token in END_OF_GENERATION_TOKENS # 
         ]
     
-    try:
-        model = BetterTransformer.transform(model) # for flash attention
-    except Exception as e:
-        print("Model is not compatible with BetterTransformer or already using flash attention")
-        pass
-
     if max_samples is None:
         max_samples = len(calibration_split)
         total = len(calibration_split) // calibration_split.batch_size
@@ -648,8 +635,8 @@ def extract_model_calibration_data(
                     generated_answer_ids, 
                     skip_special_tokens=True # remove the special tokens
                 )
-        
-        included_questions += batch["question_id"]
+
+        included_questions += batch["question_id"]   
         
         # Create the calibration data 
         for(
@@ -680,7 +667,7 @@ def extract_model_calibration_data(
             verbalized_uncertainties["cot_qual"],
             seq_likelihoods,
             cot_seq_likelihoods,
-        ):
+        ):             
             calibration_data[question_id] = {
                 "accuracy": int(correctness),
                 "score": float(answer_score),
@@ -1153,6 +1140,179 @@ def preprocess_truthful_qa(
 
     return data_loaders
 
+def preprocess_natural_questions(
+    model_name: str,
+    num_in_context_samples: int,
+    batch_size: int,
+    data_dir: str,
+    validation_fraction: float = 0.01,
+    max_input_length: int = MAX_INPUT_LENGTH,
+) -> Dict[str, DataLoader]:
+    """
+    Preprocess the Natural Questions dataset. This involves preparing the inputs by adding a number in-context samples and using
+    the target model's tokenizer. The function handles both long answers (paragraphs) and short answers (entities/spans).
+    """
+    processed_data_dir = os.path.join(
+        data_dir, 
+        "natural_questions", 
+        model_name.replace("/", "_"),
+        "preprocessed_data", 
+        f"in_context_{num_in_context_samples}"
+    )
+    train_data_loader_path = os.path.join(processed_data_dir, "train.dl")
+    test_data_loader_path = os.path.join(processed_data_dir, "test.dl")
+
+    if (
+        not os.path.exists(train_data_loader_path)
+        or not os.path.exists(test_data_loader_path)
+    ):
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        # Load Natural Questions dataset
+        train_data = load_dataset("nq_open", split="train")
+        test_data = load_dataset("nq_open", split="validation")
+
+        if not os.path.exists(processed_data_dir):
+            os.makedirs(processed_data_dir)
+        
+        for split_name, data_split, data_loader_path in zip(
+            ["train", "test"], 
+            [train_data, test_data], 
+            [train_data_loader_path, test_data_loader_path],
+        ):
+            if os.path.exists(data_loader_path):
+                continue
+
+            # NQ-open only has question and answer columns, no need to remove anything
+            remove_columns = []
+
+            data_split = data_split.map(
+                # Create processing function by making variables available in the closure
+                preprocess_batch_wrapper_natural_questions(
+                    train_data=train_data,
+                    num_in_context_samples=num_in_context_samples,
+                    tokenizer=tokenizer,
+                    max_input_length=max_input_length,
+                ),
+                batched=True,
+                batch_size=batch_size,
+                remove_columns=remove_columns,
+            )
+            data_split.set_format(
+                type="torch",
+                columns=[
+                    "input_ids", 
+                    "attention_mask", 
+                    "cot_input_ids", 
+                    "cot_attention_mask"
+                ],
+                output_all_columns=True,
+            )
+            data_loader = DataLoader(
+                data_split,
+                batch_size=batch_size,
+                drop_last=True,
+            )
+            
+            data_split.save_to_disk(
+                os.path.join(processed_data_dir, split_name + ".data")
+            )
+            torch.save(
+                data_loader,
+                os.path.join(processed_data_dir, split_name + ".dl")
+            )
+    
+    data_loaders = {
+        "train": torch.load(train_data_loader_path),
+        "test": torch.load(test_data_loader_path),
+    }
+
+    return data_loaders
+
+def preprocess_batch_wrapper_natural_questions(
+    train_data: Dataset,
+    num_in_context_samples: int,
+    tokenizer: AutoTokenizer,
+    max_input_length: int
+) -> Callable:
+    """
+    Closure for the process batch function that makes certain variables available to the function scope.
+    Specifically handles NQ-open format with direct question-answer pairs.
+    """
+
+    def preprocess_batch(batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """
+        Process a specific batch of NQ-open questions.
+        """
+        # Generate question IDs if not present
+        if "question_id" not in batch:
+            batch["question_id"] = [
+                hashlib.sha256(
+                    question.encode("utf-8")
+                ).hexdigest() 
+                for question in batch["question"]
+            ]
+
+        # Select few-shot examples
+        few_shot_prompts = []
+        for _ in range(len(batch["question"])):
+            few_shot_prompt = ""
+
+            if num_in_context_samples > 0:
+                train_indices = np.random.choice(
+                    range(0, len(train_data)), size=num_in_context_samples
+                )
+                in_context_samples = train_data.select(train_indices)
+                
+                for sample in in_context_samples:
+                    # For NQ-open, we use the first answer if multiple are available
+                    sample_answer = sample["answer"][0] if sample["answer"] else "NULL"
+                    few_shot_prompt += QA_FEW_SHOT_TEMPLATE.format(
+                        question=sample["question"], 
+                        answer=sample_answer
+                    )
+            
+            few_shot_prompts.append(few_shot_prompt)
+        
+        # Create prompts with context
+        batch_with_prompt = [
+            few_shot_prompt + " Question: " + question + " Your response should only be in english and no other language." + " Answer: "
+            for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
+        ]
+        
+        # Create prompts with Chain-of-Thought
+        batch_with_cot_prompt = [
+            few_shot_prompt + QA_COT_PROMPT + " Question: " + question + " Your response should only be in english and no other language." + " Answer: "
+            for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
+        ]
+
+        tokenizer.padding_side = "left"
+        inputs = tokenizer(
+            batch_with_prompt,
+            padding="max_length",
+            truncation=True,
+            max_length=max_input_length,
+        )
+        cot_inputs = tokenizer(
+            batch_with_cot_prompt,
+            padding="max_length",
+            truncation=True,
+            max_length=max_input_length,
+        )
+
+        # For NQ-open, use the first answer if multiple are available
+        batch["answer"] = [ans[0] if ans else "NULL" for ans in batch["answer"]] 
+        batch["input_ids"] = inputs.input_ids
+        batch["attention_mask"] = inputs.attention_mask
+        batch["cot_input_ids"] = cot_inputs.input_ids
+        batch["cot_attention_mask"] = cot_inputs.attention_mask
+
+        return batch
+    
+    return preprocess_batch
+
 def load_experiment_dataset(
     model_name: str,
     dataset_name: str,
@@ -1193,6 +1353,13 @@ def load_experiment_dataset(
         )
     elif dataset_name == "truthful_qa":
         return preprocess_truthful_qa(
+            model_name=model_name,
+            num_in_context_samples=num_in_context_samples,
+            batch_size=batch_size,
+            data_dir=data_dir,
+        )
+    elif dataset_name == "natural_questions":
+        return preprocess_natural_questions(
             model_name=model_name,
             num_in_context_samples=num_in_context_samples,
             batch_size=batch_size,
