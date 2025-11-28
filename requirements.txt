@@ -5,6 +5,7 @@ pandas
 dill
 torch
 torcheval
+torch-uncertainty
 torchvision
 openai
 datasets

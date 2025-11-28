@@ -73,5 +73,5 @@ class PlattScaling(nn.Module):
             
         with torch.no_grad():
             self.scale = self.scale.copy_(best_scale)
-            self.bias = self.scale.copy_(best_bias)
+            self.bias = self.bias.copy_(best_bias)
         print(f"Training for Platt Scaling completed. Best training Loss: {best_loss:.4f}")
