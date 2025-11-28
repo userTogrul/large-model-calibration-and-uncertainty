@@ -15,16 +15,16 @@ EMISSION_DIR = "./emissions"
 EMBEDDING_MODEL = "text-embedding-ada-002"
 GPT_MODEL = "gpt-4o"
 LLM_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
-CALIBRATION_MODEL = "microsoft/deberta-v3-base"
 SENTENCE_EMBEDDING_MODEL = "all-mpnet-base-v2"
 BLACK_BOX_MODELS = [
     "gpt-4", 
     "gpt-4o",
-    "deepseek-reasoner",
+    "aiproxy/deepseek-reasoner",
 ]
 WHITE_BOX_MODELS = [
     "meta-llama/Llama-3.1-8B-Instruct", 
     "Qwen/Qwen2.5-7B-Instruct", 
+    "Qwen/Qwen3-4B-Instruct-2507",
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
     "mistralai/Mistral-7B-Instruct-v0.3", 
     "meta-llama/Llama-3.1-70B-Instruct", 
@@ -73,16 +73,6 @@ QUALITATIVE_SCALE = {
 }
 SEED = 1111
 INPUT_PARTS= ["question", "answer"] # Default composition of inputs
-END_OF_GENERATION_TOKENS = [
-    "Question:",
-    " Question:",
-    "Question: ",
-    "\n",
-    "Answer:",
-    "\nQuestion:",
-    " Answer:",
-    "Q:",
-]
 ALLOWED_INPUTS = {
     "question",
     "answer",
@@ -96,21 +86,23 @@ CALIBRATION_PARAMS = {
 }
 
 # dataset details
-DATASETS = ("trivia_qa", "truthful_qa")
+DATASETS = ("trivia_qa", "truthful_qa", "natural_questions")
 DATASET_SPLIT_SIZES = {
     "trivia_qa": {"train": 12000, "test": 1500},
-    "truthful_qa": {"train": 409, "test": 408}
+    "truthful_qa": {"train": 409, "test": 408},
+    "natural_questions": {"train": 500, "test": 500},  # From Natural Questions paper
 }
 
 # BASELINES & METRICS
 BASELINE_METHODS = [
-    # "seq_likelihood",
-    # "cot_seq_likelihood",
+    "seq_likelihood",
+    "cot_seq_likelihood",
     "cot_qual_verbalized_uncertainty",
     "qual_verbalized_uncertainty",
-    # "ir_seq_likelihood",
-    # "ps_seq_likelihood",
-    # "ts_seq_likelihood",
+    "ps_seq_likelihood",
+    "ts_seq_likelihood",
+    "lmvslm",
+    "hallumeasure",
     # "sb_seq_likelihood", #TODO
 ]
 EVAL_METRIC_ORDER = ["ece", "smece", "brier_score", "auroc", "bleu"]
