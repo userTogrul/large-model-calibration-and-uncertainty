@@ -14,7 +14,7 @@ import gc
 import torch, torchvision
 import torch.nn as nn
 import torch.optim as optim
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 from transformers import (
      AutoModelForCausalLM,
      AutoTokenizer,
@@ -69,16 +69,21 @@ from src.evaluation import (
     evaluate_confidences,
 )
 from src.plots import plot_conf, plot_uncert, plot_reliability_diagram
+from methods.hallumeasure.hallumeasure import HalluMeasure
+from methods.lmvslm import LMvsLM
+import csv
+from tqdm import tqdm
 # from pudb import set_trace; set_trace() # for debugging
 
 # SECRETS
 SECRET_IMPORTED = False
 try:
-     from secret import OPENAI_API_KEY, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID, COUNTRY_CODE, WANDB_API_KEY, HF_TOKEN
+     from secret import OPENAI_API_KEY, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID, COUNTRY_CODE, WANDB_API_KEY, HF_TOKEN, BASE_URL
      SECRET_IMPORTED = True
      os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
      os.environ["WANDB_API_KEY"] = WANDB_API_KEY
      os.environ['HF_TOKEN'] = HF_TOKEN
+     os.environ["BASE_URL"] = BASE_URL
 
 except (ImportError, ModuleNotFoundError) as e:
     warnings.warn("secret.py could not be imported.")
@@ -88,6 +93,7 @@ except (ImportError, ModuleNotFoundError) as e:
         TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
         COUNTRY_CODE = os.environ.get("COUNTRY_CODE")
         WANDB_API_KEY = os.environ.get("WANDB_API_KEY")
+        BASE_URL = os.environ.get("BASE_URL")
         SECRET_IMPORTED = True
     except AttributeError:
         raise ImportError(
@@ -242,7 +248,7 @@ def run_calibration_benchmark(
                    )
                # outside for loop
                # Free up memory after loading calibration data
-              del model, data_loaders, tokenizer # do not delete the tokenizer for the calibration
+              del model, data_loaders, tokenizer
               if torch.cuda.is_available():
                     torch.cuda.empty_cache()
               gc.collect()
@@ -330,7 +336,7 @@ def run_calibration_benchmark(
                          train_likelihoods,
                          train_targets,
                     )
-                    nonparametric_scalers[method] = scaler   
+                    nonparametric_scalers[method] = scaler
     #############################
     ## FINAL BASELINE RESULTS  ##
     #############################
@@ -355,6 +361,53 @@ def run_calibration_benchmark(
               )
               likelihoods[np.isnan(likelihoods)] = 0
               baseline_confidences[split_name]["seq_likelihood"] = likelihoods
+              # Initialize HalluMeasure and LMvsLM if needed
+              hallumeasure = None
+              lmvslm = None
+
+              # Add HalluMeasure evaluation
+              if method == "hallumeasure":
+                  hallumeasure = HalluMeasure(device=device)
+                  # Initialize OpenAI client
+                  openai_client = OpenAI(
+                         api_key=OPENAI_API_KEY,
+                         base_url=BASE_URL,
+                  )
+                  hallucination_scores = []
+                  for question_data in tqdm(split_data.values(), desc=f"Processing {method} for {split_name}"):
+                      try:
+                         response = question_data["answer"]
+                         context = question_data["gold_answer"]
+                         result = hallumeasure.measure_hallucination(response, context, openai_client)
+                         hallucination_scores.append(1.0 - result.hallucination_score)  # Convert to confidence score
+                      except BadRequestError as e:
+                         print(f"Response: {response}")
+                         print(f"Context: {context}")
+                         hallucination_scores.append(0.0)
+                         continue
+                      except Exception as e:
+                         print(f"Error: {e}")
+                         hallucination_scores.append(0.0)
+                         continue
+                  baseline_confidences[split_name]["hallumeasure"] = np.array(hallucination_scores)
+               
+              if method == "lmvslm":
+                  lmvslm = LMvsLM(examinee_model=model_name, device=device)
+                  lmvslm_scores = []
+                  for question_data in tqdm(split_data.values(), desc=f"Processing {method} for {split_name}"):
+                      try:
+                         claim = f"Question: {question_data['question']}\nAnswer: {question_data['answer']}"
+                         lmvslm_confidence = lmvslm.get_confidence(claim)
+                         lmvslm_scores.append(lmvslm_confidence)
+                      except BadRequestError as e:
+                         print(f"Claim: {claim}")
+                         lmvslm_scores.append(0.0)
+                      except Exception as e:
+                         print(f"Error: {e}")
+                         lmvslm_scores.append(0.0)
+                  baseline_confidences[split_name]["lmvslm"] = np.array(lmvslm_scores)
+                  # Free up memory after loading calibration data
+                  lmvslm.__del__()
 
               cot_likelihoods = np.array(
                    [
@@ -380,7 +433,7 @@ def run_calibration_benchmark(
                         
                         if method == "ps_seq_likelihood":
                              outputs = scaler.forward(inputs).numpy()
-                        elif method == "ts_seq_likelihood":                              
+                        elif method == "ts_seq_likelihood":
                              outputs = np.array(scaler.forward(inputs))
                         elif method == "ir_seq_likelihood":
                              outputs = np.array(scaler.transform(inputs))
@@ -464,25 +517,56 @@ def run_calibration_benchmark(
                    "all_correctness": correctness,
               }
 
-              # Plot reliability diagram
+              # Collect data for combined reliability diagrams
               if img_dir is not None:
-                   
-                   if not os.path.exists(img_dir):
+                    if not os.path.exists(img_dir):
                         os.makedirs(img_dir)
-
-                   model_name_edited = model_name.replace("/", "_")
+                    
+                    model_name_edited = model_name.replace("/", "_")
                    
-                   plot_reliability_diagram( # TODO: Check this
-                        confidences,
-                        correctness,
-                        save_path=os.path.join(
-                             img_dir,
-                             f"{split_name}_{baseline_name}_{dataset_name}_{model_name_edited}.pdf",
-                        ),
-                        success_percentage=baseline_results.get(
-                             f"{split_name}_{baseline_name}_success", 1
-                        ),
-                   )
+                    plot_reliability_diagram(
+                         confidences,
+                         correctness,
+                         save_path=os.path.join(
+                              img_dir,
+                              f"{split_name}_{baseline_name}_{dataset_name}_{model_name_edited}.pdf",
+                         ),
+                         success_percentage=baseline_results.get(
+                              f"{split_name}_{baseline_name}_success", 1
+                         ),
+                    )
+
+
+#                    # Store data for combined plotting
+#                    if split_name not in eval_data["combined_plots"]:
+#                         eval_data["combined_plots"][split_name] = {
+#                              "confidences": [],
+#                              "correctness": [],
+#                              "labels": [],
+#                              "success_percentages": []
+#                         }
+                   
+#                    eval_data["combined_plots"][split_name]["confidences"].append(confidences)
+#                    eval_data["combined_plots"][split_name]["correctness"].append(correctness)
+#                    eval_data["combined_plots"][split_name]["labels"].append(baseline_name)
+#                    eval_data["combined_plots"][split_name]["success_percentages"].append(
+#                         baseline_results.get(f"{split_name}_{baseline_name}_success", 1)
+#                    )
+
+#     # Plot combined reliability diagrams
+#     if img_dir is not None:
+#          model_name_edited = model_name.replace("/", "_")
+#          for split_name, plot_data in eval_data["combined_plots"].items():
+#               plot_multiple_reliability_diagrams(
+#                    all_confidences_list=plot_data["confidences"],
+#                    all_correctness_list=plot_data["correctness"],
+#                    labels=plot_data["labels"],
+#                    save_path=os.path.join(
+#                         img_dir,
+#                         f"{split_name}_combined_{dataset_name}_{model_name_edited}.pdf"
+#                    ),
+#                    success_percentages=plot_data["success_percentages"]
+#               )
 
     # Create results directory to save results
     baseline_results_dir=None
@@ -495,8 +579,7 @@ def run_calibration_benchmark(
               f"in_context_{num_in_context_samples}",
          )
 
-    if not os.path.exists(baseline_results_dir):
-         os.makedirs(baseline_results_dir)
+    os.makedirs(baseline_results_dir, exist_ok=True)
 
     for baseline_name, baseline_data in eval_data.items():
          with open(
@@ -535,8 +618,12 @@ def run_calibration_benchmark(
                    
     print(results_df)
     print(results_df.to_latex(float_format="%.3f"))
-    for name, result in baseline_results.items():
-         print(f"{name}: {result:.3f}")
+    with open(f"results_{model_name.replace('/', '_')}_{dataset_name}.csv", "w") as f:
+         writer = csv.writer(f)
+         writer.writerow(["name", "result"])
+         for name, result in baseline_results.items():
+              writer.writerow([name, result])
+              print(f"{name}: {result:.3f}")
 
     # Log to wandb
     if wandb_run is not None:
@@ -581,7 +668,7 @@ def main():
     )
     parser.add_argument(
          "--calibration-learning-rate",
-         type=int,
+         type=float,
          default=CALIBRATION_LEARNING_RATE
     )
     parser.add_argument(
@@ -657,12 +744,15 @@ def main():
     args = parser.parse_args()
 
     # ACCELERATION
-    device=args.device
-
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
+    device = args.device
+    try:
+        if torch.backends.mps.is_available():
+            device = torch.device(device)
+        elif torch.cuda.is_available():
+            device = torch.device(device)
+            torch.backends.cudnn.benchmark = True
+    except Exception as e:
+        warnings.warn(f"Error setting device: {str(e)}")
 
     tracker = None
     wandb_run = None
@@ -674,7 +764,7 @@ def main():
     if args.wandb:
          wandb_run = wandb.init(
               project=PROJECT_NAME,
-              dir=args.data_dir + "wandb", # define the directory to store logs
+              dir=os.path.join(args.data_dir, "wandb"),
               tags=[args.dataset_name, args.model_name],
               settings=wandb.Settings(start_method="fork"),
               config={
