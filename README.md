@@ -5,7 +5,6 @@
 ![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)
 [![last commit](https://img.shields.io/github/last-commit/userTogrul/large-model-calibration-and-uncertainty?color=green)](https://img.shields.io/github/last-commit/userTogrul/large-model-calibration-and-uncertainty?color=green)
 [![Paper: arXiv](https://img.shields.io/badge/Paper-arXiv-%23B31B1B)](https://arxiv.org/abs/2504.18346)
-[![Made with Love](https://img.shields.io/badge/Made%20with-Love-red.svg)](https://github.com/chetanraj/awesome-github-badges)
 
 This reposity contains review list and source code for various methods for quantification of uncertainty and calibration in large language models.
 
@@ -41,7 +40,7 @@ For **gpt-4 & gpt-4o**:
 
 For **deepseek-r1**:
 
-    sh run_deepseek_r1.sh
+    sh run_deepseek.sh
 
 ## Literature review list
 
