@@ -5,7 +5,7 @@ from typing import List, Optional
 from dataclasses import dataclass
 import torch
 from openai import OpenAI
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 @dataclass
 class Claim:
@@ -54,7 +54,12 @@ class ClaimExtractor:
         """
         
         if "gpt" not in model_name.lower():
-            self.model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+            # 4-bit quantization for Apple Silicon
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=quantization_config, low_cpu_mem_usage=True, device_map="auto").to(device)
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token

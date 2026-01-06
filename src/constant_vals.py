@@ -14,14 +14,14 @@ EMISSION_DIR = "./emissions"
 # models
 EMBEDDING_MODEL = "text-embedding-ada-002"
 GPT_MODEL = "gpt-4o"
-LLM_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+LLM_MODEL = "meta-llama/Llama-3.2-1B-Instruct" # "Qwen/Qwen2.5-0.5B-Instruct" # "meta-llama/Llama-3.1-8B-Instruct"
 SENTENCE_EMBEDDING_MODEL = "all-mpnet-base-v2"
-BLACK_BOX_MODELS = [
+CLOSED_BOX_MODELS = [
     "gpt-4", 
     "gpt-4o",
     "aiproxy/deepseek-reasoner",
 ]
-WHITE_BOX_MODELS = [
+OPEN_BOX_MODELS = [
     "meta-llama/Llama-3.1-8B-Instruct", 
     "Qwen/Qwen2.5-7B-Instruct", 
     "Qwen/Qwen3-4B-Instruct-2507",

@@ -27,3 +27,5 @@ scipy
 tokenizers
 sentencepiece
 pudb
+accelerate
+bitsandbytes

@@ -19,7 +19,7 @@ class LMvsLM:
         examiner_model: str = "gpt-4o-mini",
         examinee_model: Union[str, AutoModelForCausalLM] = "gpt-4",
         max_questions: int = 5,
-        device: str = "cpu",
+        device: Optional[str] = None,
     ):
         """
         Initialize LMvsLM.
@@ -28,7 +28,7 @@ class LMvsLM:
             examiner_model: The model to use as examiner (GPT model)
             examinee_model: The model to use as examinee (can be GPT model name or HF model instance)
             max_questions: Maximum number of questions in cross examination
-            device: Device to run HF models on
+            device: Device to run HF models on (auto-detects if None: cuda > mps > cpu)
 
         Raises:
             ValueError: If parameters are invalid
@@ -36,14 +36,23 @@ class LMvsLM:
         # Validate parameters
         if max_questions < 1:
             raise ValueError("max_questions must be at least 1")
+        
+        # Auto-detect device if not specified
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
             
         self.examiner_model = examiner_model
         self.examinee_model = examinee_model
         self.max_questions = max_questions
         self.device = device
         # Initialize HF model and tokenizer if examinee is open-access
-        self.is_examinee_openai = isinstance(examinee_model, str) and ("gpt" in examinee_model.lower() or "deepseek" in examinee_model.lower())
-        if not self.is_examinee_openai:
+        self.is_examinee_closed_box = isinstance(examinee_model, str) and ("gpt" in examinee_model.lower() or "deepseek" in examinee_model.lower())
+        if not self.is_examinee_closed_box:
             if isinstance(examinee_model, str):
                 try:
                     # Initialize tokenizer first to ensure compatibility
@@ -105,7 +114,7 @@ class LMvsLM:
         if not question.strip():
             raise ValueError("Question cannot be empty")
             
-        if self.is_examinee_openai:
+        if self.is_examinee_closed_box:
             client = OpenAI(
                     api_key=OPENAI_API_KEY,
                     base_url=BASE_URL,
@@ -166,7 +175,7 @@ class LMvsLM:
             ValueError: If claim is empty or client is None
             RuntimeError: If examination fails after max retries
         """
-        # Initial prompt for examiner
+        # Initial prompt for examiner, ask one question at each round
         examiner_prompt = (
             "You are an examiner tasked with determining if the following claim is factually correct "
             "through cross-examination. Ask questions to verify the claim's accuracy.\n\n"

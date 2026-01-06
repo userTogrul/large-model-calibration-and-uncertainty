@@ -1,13 +1,14 @@
 #!/usr/bin/bash
 
 results_dir="./results_openai"
-data_dir="./data"
+data_dir="/data1/toghrul/datasets" #
 model_name_1="gpt-4"
 model_name_2="gpt-4o"
 dataset_name="trivia_qa"
 ds_name2="truthful_qa"
+ds_name3="natural_questions"
 
-echo "Run $1"
+echo "Run $1" 
 
 while true; do
     read -p "Do you want to run QA task?" yn
@@ -24,7 +25,8 @@ done
 #     echo "pick higher"
 # fi
 
-python main.py --model-name $model_name_1 --dataset-name $dataset_name --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --knock
-python main.py --model-name $model_name_2 --dataset-name $dataset_name --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --knock
-python main.py --model-name $model_name_1 --dataset-name $ds_name2 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --knock
-python main.py --model-name $model_name_2 --dataset-name $ds_name2 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --knock
+# python main.py --model-name $model_name_1 --dataset-name $dataset_name --num-in-context-samples 5 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods seq_likelihood cot_seq_likelihood cot_qual_verbalized_uncertainty ps_seq_likelihood ts_seq_likelihood lmvslm
+# python main.py --model-name $model_name_2 --dataset-name $dataset_name --num-in-context-samples 5 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --knock
+# python main.py --model-name $model_name_1 --dataset-name $ds_name2 --num-in-context-samples 5 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods seq_likelihood cot_seq_likelihood cot_qual_verbalized_uncertainty ps_seq_likelihood ts_seq_likelihood lmvslm
+# python main.py --model-name $model_name_2 --dataset-name $ds_name2 --num-in-context-samples 5 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --knock
+python main.py --model-name $model_name_2 --dataset-name $ds_name3 --num-in-context-samples 5 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods seq_likelihood cot_seq_likelihood cot_qual_verbalized_uncertainty ps_seq_likelihood ts_seq_likelihood

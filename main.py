@@ -54,7 +54,7 @@ from src.constant_vals import (
      DATASET_SPLIT_SIZES,
      NUM_IN_CONTEXT_SAMPLES,
      INPUT_PARTS,
-     BLACK_BOX_MODELS,
+     CLOSED_BOX_MODELS,
      QUALITATIVE_SCALE,
      EVAL_METRIC_ORDER,
      MAX_INPUT_LENGTH
@@ -62,7 +62,7 @@ from src.constant_vals import (
 from methods.platt_scaling.platt_scaling import PlattScaling
 from methods.temperature_scaling.temp_scaling import TemperatureScaling
 from sklearn.isotonic import IsotonicRegression # isotonic regression
-from src.data import load_experiment_dataset, unpack_dataloader, create_or_load_calibration_data, extract_black_box_calibration_data
+from src.data import load_experiment_dataset, unpack_dataloader, create_or_load_calibration_data, extract_closed_box_calibration_data
 from src.evaluation import (
     get_target_function, 
     extract_verbalized_confidence,
@@ -204,7 +204,7 @@ def run_calibration_benchmark(
             )
      ):
          
-         if model_name not in BLACK_BOX_MODELS:
+         if model_name not in CLOSED_BOX_MODELS:
               # get the calibration data
               data_loaders = load_experiment_dataset(
                    model_name = model_name,
@@ -255,7 +255,7 @@ def run_calibration_benchmark(
               pass
          else:
               for split in data_split_names:
-                    calibration_data[split] = extract_black_box_calibration_data(
+                    calibration_data[split] = extract_closed_box_calibration_data(
                          model_name=model_name,
                          split=split, 
                          dataset_name=dataset_name,
@@ -276,7 +276,7 @@ def run_calibration_benchmark(
               calibration_data[split] = split_data
          pass
     
-    # Do scaling methods for calibration
+    # Train parametric scaling and nonparametric methods for calibration
     parametric_scalers = {}
     nonparametric_scalers = {}
     for method in ["ps_seq_likelihood", "ts_seq_likelihood", "ir_seq_likelihood"]:
@@ -337,9 +337,9 @@ def run_calibration_benchmark(
                          train_targets,
                     )
                     nonparametric_scalers[method] = scaler
-    #############################
-    ## FINAL BASELINE RESULTS  ##
-    #############################
+    ################################
+    ## Evaluate baseline methods  ##
+    ################################
     baseline_confidences = defaultdict(dict) # 
     baseline_results = {}
     masks = defaultdict(dict) # For qualitative verbalization
@@ -409,6 +409,10 @@ def run_calibration_benchmark(
                   # Free up memory after loading calibration data
                   lmvslm.__del__()
 
+               if method == "ourmethod":
+                    # TODO: Implement our method
+                    # use verbalized qualitative uncertainties for claims
+
               cot_likelihoods = np.array(
                    [
                         question_data["cot_seq_likelihood"]
@@ -465,8 +469,9 @@ def run_calibration_benchmark(
                          f"verbalized{infix}_qual"
                     ] = confidences
                     masks[split_name][f"verbalized{infix}_qual"] = np.array(successes)
-         
-    ## SFT TODO: later
+               
+
+    #TODO: SFT later
 
     #### EVALUATION ###
     eval_data = defaultdict(lambda: dict())

@@ -134,7 +134,7 @@ def num_tokens_from_messages(messages, model="gpt-4o-mini-2024-07-18"):
 ###### GENERATE CALIBRATION OUTPUTS USING THE PREPROCESSED INPUTS ######
 ########################################################################
 
-def extract_black_box_calibration_data(
+def extract_closed_box_calibration_data(
     model_name: str,
     num_in_context_samples: int,
     split: str,
@@ -504,9 +504,7 @@ def extract_model_calibration_data(
             )
         
         # generate sequence likelihoods
-        generated_answer_ids = outputs["sequences"][
-            :, inputs.shape[1] :
-        ].squeeze(0) # extract only output sequence ids, starting from the input length to the end. [batch_size, sequence_length]
+        generated_answer_ids = outputs["sequences"][:, inputs.shape[1] :].squeeze(0) # extract only output sequence ids, starting from the input length to the end. [batch_size, sequence_length]
         predictions = torch.log(
             F.softmax(
                 torch.stack(
@@ -533,11 +531,9 @@ def extract_model_calibration_data(
         ).long() # this line converts bool tensor to long tensor (1s and 0s) [batch_size, sequence_length_generated]
         num_tokens = token_mask.sum(dim=-1) # count the number of tokens, Since token_mask is a 1D tensor, dim=-1 sums over the entire tensor.
         seq_likelihoods = (log_probs * token_mask).sum(-1) / num_tokens # calculate the average log probability, Averaging allows for comparison across sequences of different lengths.
-        seq_likelihoods = torch.exp(seq_likelihoods) # convert average lop probs to average pertoken  probability exponential
+        seq_likelihoods = torch.exp(seq_likelihoods) # convert average log probs to average per-token probability exponential
         #CoT
-        cot_generated_answer_ids = cot_outputs["sequences"][
-            :, cot_inputs.shape[1] :
-        ].squeeze(0)
+        cot_generated_answer_ids = cot_outputs["sequences"][:, cot_inputs.shape[1]:].squeeze(0) # extract only output sequence ids, starting from the input length to the end. [batch_size, sequence_length]
         cot_predictions = torch.log(
             F.softmax(
                 torch.stack(
@@ -564,19 +560,15 @@ def extract_model_calibration_data(
         cot_num_tokens = cot_token_mask.sum(dim=-1)
         cot_seq_likelihoods = (cot_log_probs * cot_token_mask).sum(-1) / cot_num_tokens
         cot_seq_likelihoods = torch.exp(cot_seq_likelihoods) # convert to probability exponential
-        generated_answer_ids = outputs["sequences"][
-            :, inputs.shape[1] :
-        ].squeeze(0) # remove the special tokens
+        generated_answer_ids = outputs["sequences"][:, inputs.shape[1]:].squeeze(0) # extract only output sequence ids, starting from the input length to the end. [batch_size, sequence_length]
         model_answers = tokenizer.batch_decode(
             generated_answer_ids, 
             skip_special_tokens=True
-        ) # remove the special tokens
-        cot_generated_answer_ids = cot_outputs["sequences"][
-            :, cot_inputs.shape[1] : # get the generated answer
-        ].squeeze(0) # remove the special tokens
+        )
+        cot_generated_answer_ids = cot_outputs["sequences"][:, cot_inputs.shape[1]:].squeeze(0) # extract only output sequence ids, starting from the input length to the end. [batch_size, sequence_length]
         cot_model_answers = tokenizer.batch_decode(
             cot_generated_answer_ids, 
-            skip_special_tokens=True # remove the special tokens
+            skip_special_tokens=True
         )
 
         # for TruthfulQA
