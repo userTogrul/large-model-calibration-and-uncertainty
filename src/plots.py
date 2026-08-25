@@ -9,6 +9,8 @@ sns.set_theme()
 # matplotlib.rcParams['text.usetex'] = True
 matplotlib.rcParams['font.size'] = 16
 matplotlib.rcParams['font.family'] = 'sans-serif'
+matplotlib.rcParams['savefig.dpi'] = 600
+matplotlib.rcParams['figure.dpi'] = 200
 
 def plot_reliability_diagram_cdf(
         baseline_confidences: Dict[str, List[float]],
@@ -109,8 +111,8 @@ def plot_reliability_diagram_cdf(
     ax.set_ylim([0, 1])
     ax.set_xlabel("Confidence", fontsize=18, weight='bold', alpha=0.8)
     ax.set_ylabel("Cumulative Fraction", fontsize=18, weight='bold', alpha=0.8)
-    ax.tick_params(labelsize=14)
-    ax.legend(fontsize=12, loc="upper left")
+    ax.tick_params(labelsize=15)
+    ax.legend(fontsize=15, loc="upper left")
     plt.tight_layout()
 
     if save_path:
@@ -226,7 +228,7 @@ def plot_reliability_diagram_cumulative_accuracy(
     ax.set_xlabel("Confidence", fontsize=18, weight='bold', alpha=0.8)
     ax.set_ylabel("Cumulative Accuracy", fontsize=18, weight='bold', alpha=0.8)
     ax.tick_params(labelsize=14)
-    ax.legend(fontsize=12, loc="upper left")
+    ax.legend(fontsize=16, loc="upper left")
     plt.tight_layout()
 
     if save_path:

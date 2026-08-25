@@ -124,7 +124,13 @@ BASELINE_METHODS = [
     "ts_seq_likelihood",
     "lmvslm",
     "hallumeasure",
+    "semantic_entropy",
     "ourmethod",
     # "sb_seq_likelihood", #TODO
 ]
 EVAL_METRIC_ORDER = ["ece", "smece", "brier_score", "auroc", "aurc", "bleu"]
+
+# Semantic Entropy hyperparameters (Kuhn et al. 2023 / Farquhar et al. 2024).
+SEMANTIC_ENTROPY_NUM_SAMPLES = 10
+SEMANTIC_ENTROPY_TEMPERATURE = 1.0
+SEMANTIC_ENTROPY_NLI_MODEL = "microsoft/deberta-large-mnli"

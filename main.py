@@ -57,7 +57,10 @@ from src.constant_vals import (
      CLOSED_BOX_MODELS,
      QUALITATIVE_SCALE,
      EVAL_METRIC_ORDER,
-     MAX_INPUT_LENGTH
+     MAX_INPUT_LENGTH,
+     SEMANTIC_ENTROPY_NUM_SAMPLES,
+     SEMANTIC_ENTROPY_TEMPERATURE,
+     SEMANTIC_ENTROPY_NLI_MODEL,
 )
 from methods.platt_scaling.platt_scaling import PlattScaling
 from methods.temperature_scaling.temp_scaling import TemperatureScaling
@@ -72,6 +75,7 @@ from src.plots import plot_reliability_diagram, plot_reliability_diagram_cdf
 from methods.hallumeasure.hallumeasure import HalluMeasure
 from methods.lmvslm import LMvsLM
 from methods.ourmethod import ClaimUncertaintyMeasurer
+from methods.semantic_entropy import SemanticEntropy
 import csv
 from tqdm import tqdm
 # from pudb import set_trace; set_trace() # for debugging
@@ -497,6 +501,66 @@ def run_calibration_benchmark(
                          continue
                   baseline_confidences[split_name]["hallumeasure"] = np.array(hallucination_scores)
                
+              if method == "semantic_entropy":
+                  # Kuhn et al. 2023 / Farquhar et al. 2024:
+                  # K-sample generation + bidirectional NLI clustering + cluster-marginal entropy.
+                  se = SemanticEntropy(
+                       nli_model_name=SEMANTIC_ENTROPY_NLI_MODEL,
+                       device=device,
+                       num_samples=SEMANTIC_ENTROPY_NUM_SAMPLES,
+                       generation_temperature=SEMANTIC_ENTROPY_TEMPERATURE,
+                       seed=seed,
+                  )
+                  se_scores = []
+                  if model_name in CLOSED_BOX_MODELS:
+                       openai_client_se = OpenAI(api_key=OPENAI_API_KEY, base_url=BASE_URL)
+                       for question_data in tqdm(split_data.values(), desc=f"Processing {method} for {split_name}"):
+                           try:
+                               result = se.measure(
+                                   prompt=question_data["question"],
+                                   question=question_data["question"],
+                                   openai_client=openai_client_se,
+                                   model_name=model_name,
+                               )
+                               se_scores.append(float(result.confidence))
+                           except Exception as e:
+                               print(f"Error (semantic_entropy, closed-box): {e}")
+                               se_scores.append(0.0)
+                  else:
+                       config = AutoConfig.from_pretrained(model_name)
+                       config.max_length = 550
+                       se_model = AutoModelForCausalLM.from_pretrained(
+                           model_name,
+                           torch_dtype=torch.float16,
+                           low_cpu_mem_usage=True,
+                           config=config,
+                       ).to(device)
+                       se_tokenizer = AutoTokenizer.from_pretrained(
+                           model_name, padding="max_length", padding_side="left",
+                           max_length=MAX_INPUT_LENGTH,
+                       )
+                       if se_tokenizer.pad_token is None:
+                           se_tokenizer.pad_token = se_tokenizer.eos_token
+                           se_model.config.pad_token_id = se_tokenizer.eos_token_id
+
+                       for question_data in tqdm(split_data.values(), desc=f"Processing {method} for {split_name}"):
+                           try:
+                               result = se.measure(
+                                   prompt=question_data["question"],
+                                   question=question_data["question"],
+                                   model=se_model,
+                                   tokenizer=se_tokenizer,
+                               )
+                               se_scores.append(float(result.confidence))
+                           except Exception as e:
+                               print(f"Error (semantic_entropy, open-box): {e}")
+                               se_scores.append(0.0)
+                       del se_model, se_tokenizer
+                       if torch.cuda.is_available():
+                           torch.cuda.empty_cache()
+                       gc.collect()
+                  baseline_confidences[split_name]["semantic_entropy"] = np.array(se_scores)
+
               if method == "lmvslm":
                   lmvslm = LMvsLM(examinee_model=model_name, device=device)
                   lmvslm_scores = []

@@ -17,6 +17,6 @@ while true; do
     esac
 done
 
-# python main.py --model-name $model_name_1 --dataset-name $dataset_name --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods cot_qual_verbalized_uncertainty qual_verbalized_uncertainty lmvslm hallumeasure
+python main.py --model-name $model_name_1 --dataset-name $ds_name1 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods cot_qual_verbalized_uncertainty qual_verbalized_uncertainty
 # python main.py --model-name $model_name_1 --dataset-name $ds_name2 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods cot_qual_verbalized_uncertainty qual_verbalized_uncertainty lmvslm hallumeasure
-python main.py --model-name $model_name_1 --dataset-name $ds_name2 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods ourmethod
+# python main.py --model-name $model_name_1 --dataset-name $ds_name2 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods cot_qual_verbalized_uncertainty qual_verbalized_uncertainty

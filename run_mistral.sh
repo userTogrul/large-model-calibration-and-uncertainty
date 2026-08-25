@@ -24,6 +24,6 @@ done
 #     echo "pick higher"
 # fi
 
-# python main.py --model-name $model_name --dataset-name $dataset_name --device cuda:1 --num-in-context-samples 5 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods seq_likelihood cot_seq_likelihood cot_qual_verbalized_uncertainty ps_seq_likelihood ts_seq_likelihood
+python main.py --model-name $model_name --dataset-name $ds_name1 --device cuda:1 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods seq_likelihood cot_seq_likelihood cot_qual_verbalized_uncertainty ps_seq_likelihood ts_seq_likelihood
 # python main.py --model-name $model_name --dataset-name $ds_name2 --device cuda:1 --num-in-context-samples 5 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods seq_likelihood cot_seq_likelihood cot_qual_verbalized_uncertainty ps_seq_likelihood ts_seq_likelihood
-python main.py --model-name $model_name --dataset-name $ds_name1 --device cuda:1 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods lmvslm hallumeasure
+# python main.py --model-name $model_name --dataset-name $ds_name1 --device cuda:0 --num-in-context-samples 10 --data-dir $data_dir --results-dir $results_dir --calibration-num-steps 200 --baseline-methods semantic_entropy
