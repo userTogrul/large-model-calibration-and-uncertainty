@@ -10,6 +10,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 import time
 from secret import OPENAI_API_KEY, BASE_URL
+from src.constant_vals import CLOSED_BOX_MODELS, OPEN_BOX_MODELS
+
 class LMvsLM:
     """
     LMvsLM class implements the cross-examination approach for detecting factual errors.
@@ -51,7 +53,7 @@ class LMvsLM:
         self.max_questions = max_questions
         self.device = device
         # Initialize HF model and tokenizer if examinee is open-access
-        self.is_examinee_closed_box = isinstance(examinee_model, str) and ("gpt" in examinee_model.lower() or "deepseek" in examinee_model.lower())
+        self.is_examinee_closed_box = isinstance(examinee_model, str) and (examinee_model in CLOSED_BOX_MODELS)
         if not self.is_examinee_closed_box:
             if isinstance(examinee_model, str):
                 try:

@@ -33,7 +33,6 @@ class ClaimExtractor:
         self.device = device
         
         # Prompt template for claim extraction
-        # TODO: Add task rules inside the prompt
         self.extraction_prompt = """
         A claim is a short sentence containing a single piece of information. 
         You will extract claims from a given text inside <text></text> XML tags.

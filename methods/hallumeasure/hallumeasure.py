@@ -38,7 +38,6 @@ class HalluMeasure:
         self.claim_classifier = ClaimClassifier(
             model_name=model_name,
             device=device,
-            batch_classify=batch_classify
         )
         
     def measure_hallucination(

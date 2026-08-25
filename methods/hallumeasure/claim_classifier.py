@@ -106,13 +106,13 @@ class ClaimClassifier:
         Repeat these steps for each claim provided.
 
         You will output the list of dictionaries. Each dictionary will have below format:
-        {
+        {{
         "claim": "<CLAIM TEXT>",
         "thought_for_label": "<THOUGHT FOR LABEL FOR THE CLAIM>",
         "label": "CLAIM LABEL",
         "thought_for_sublabel": "<THOUGHT FOR SUBLABEL FOR THE CLAIM>",
         "sublabel": "CLAIM SUBLABEL"
-        }
+        }}
         </task>
         
         <source>: 
@@ -136,7 +136,7 @@ class ClaimClassifier:
         context: str,
         openai_client: Optional[OpenAI] = None
     ) -> Tuple[str, Optional[str]]:
-        """Classify a single claim against the reference context.
+        """Classify a single claim against the reference context in one inference time.
         
         Args:
             claim: Claim to classify
@@ -203,7 +203,7 @@ class ClaimClassifier:
         context: str,
         openai_client: Optional[OpenAI] = None
     ) -> List[Tuple[str, Optional[str]]]:
-        """Classify multiple claims against the reference context.
+        """Classify multiple claims against the reference context in one inference time.
         
         Args:
             claims: List of claims to classify
@@ -214,7 +214,7 @@ class ClaimClassifier:
             List of (classification label, error type) tuples
         """
         # Format batch prompt
-        claims_text = "\n".join(f"{i+1}. {c.text}" for i, c in enumerate(claims))
+        claims_text = "\n".join(f"{c.text}" for c in claims)
         
         prompt = self.batch_claim_prompt.format(
             context=context,

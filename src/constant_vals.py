@@ -14,12 +14,17 @@ EMISSION_DIR = "./emissions"
 # models
 EMBEDDING_MODEL = "text-embedding-ada-002"
 GPT_MODEL = "gpt-4o"
-LLM_MODEL = "meta-llama/Llama-3.2-1B-Instruct" # "Qwen/Qwen2.5-0.5B-Instruct" # "meta-llama/Llama-3.1-8B-Instruct"
+LLM_MODEL = "meta-llama/Llama-3.2-1B-Instruct" # "Qwen/Qwen2.5-0.5B-Instruct" 
 SENTENCE_EMBEDDING_MODEL = "all-mpnet-base-v2"
 CLOSED_BOX_MODELS = [
     "gpt-4", 
     "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-5-mini",
+    "gpt-5.2",
+    "o4-mini",
     "aiproxy/deepseek-reasoner",
+    "Deepseek-R1",
 ]
 OPEN_BOX_MODELS = [
     "meta-llama/Llama-3.1-8B-Instruct", 
@@ -71,6 +76,22 @@ QUALITATIVE_SCALE = {
     "High": 0.7,
     "Very high": 1,
 }
+MEAN_DECISIVENESS_SCALE = {
+    "Almost No Chance": 0.03,
+    "Highly Unlikely": 0.06,
+    "Improbable": 0.12,
+    "Little Chance": 0.14,
+    "Chances are Slight": 0.15,
+    "Unlikely": 0.20,
+    "We Doubt": 0.23,
+    "Probably Not": 0.33,
+    "About Even": 0.55,
+    "Better than Even": 0.64,
+    "Likely": 0.71,
+    "Very Good Chance": 0.75,
+    "Highly likely": 0.90,
+    "Almost Certain": 0.93,
+}
 SEED = 1111
 INPUT_PARTS= ["question", "answer"] # Default composition of inputs
 ALLOWED_INPUTS = {
@@ -103,6 +124,7 @@ BASELINE_METHODS = [
     "ts_seq_likelihood",
     "lmvslm",
     "hallumeasure",
+    "ourmethod",
     # "sb_seq_likelihood", #TODO
 ]
-EVAL_METRIC_ORDER = ["ece", "smece", "brier_score", "auroc", "bleu"]
+EVAL_METRIC_ORDER = ["ece", "smece", "brier_score", "auroc", "aurc", "bleu"]

@@ -68,9 +68,10 @@ from src.evaluation import (
     extract_verbalized_confidence,
     evaluate_confidences,
 )
-from src.plots import plot_conf, plot_uncert, plot_reliability_diagram
+from src.plots import plot_reliability_diagram, plot_reliability_diagram_cdf
 from methods.hallumeasure.hallumeasure import HalluMeasure
 from methods.lmvslm import LMvsLM
+from methods.ourmethod import ClaimUncertaintyMeasurer
 import csv
 from tqdm import tqdm
 # from pudb import set_trace; set_trace() # for debugging
@@ -108,6 +109,52 @@ np.random.seed(SEED)
 if torch.cuda.is_available():
      torch.cuda.manual_seed(SEED)
 set_seed(SEED)
+
+def tune_alpha(
+    ver_scores: np.ndarray,
+    freq_scores: np.ndarray,
+    correctness: np.ndarray,
+    alpha_grid: Optional[np.ndarray] = None,
+    n_bins: int = 10,
+) -> Tuple[float, Dict[float, float]]:
+    """Grid-search alpha on a held-out split, minimising ECE.
+
+    Args:
+        ver_scores: Per-example verification-only confidence scores.
+        freq_scores: Per-example consistency (freq) confidence scores.
+        correctness: Binary correctness labels (0/1).
+        alpha_grid: Candidate alpha values (default: 0.0, 0.1, …, 1.0).
+        n_bins: Number of ECE bins.
+
+    Returns:
+        (best_alpha, ece_by_alpha) where ece_by_alpha maps each alpha to its ECE.
+    """
+    from methods.ece.ECE import ece as compute_ece
+    from src.evaluation import get_target_function
+
+    if alpha_grid is None:
+        alpha_grid = np.round(np.arange(0.0, 1.01, 0.1), 1)
+
+    best_alpha = 0.0
+    best_ece = float("inf")
+    ece_by_alpha: Dict[float, float] = {}
+
+    for alpha in alpha_grid:
+        combined = alpha * freq_scores + (1.0 - alpha) * ver_scores
+        combined = np.clip(combined, 0.0, 1.0)
+        try:
+            target_func = get_target_function(combined, correctness, n_bins)
+            targets = target_func(combined)
+            val = float(compute_ece(y_true=targets, y_pred=combined, n_bins=n_bins))
+        except Exception:
+            val = float("inf")
+        ece_by_alpha[round(float(alpha), 1)] = round(val, 4)
+        if val < best_ece:
+            best_ece = val
+            best_alpha = round(float(alpha), 1)
+
+    return best_alpha, ece_by_alpha
+
 
 def run_calibration_benchmark(
     model_name: str,
@@ -228,9 +275,6 @@ def run_calibration_benchmark(
                     tokenizer.pad_token = tokenizer.eos_token
                     model.config.pad_token_id = tokenizer.eos_token_id
 
-                    # tokenizer = AutoTokenizer.from_pretrained(model_name, pad_token='[PAD]', padding_side="left")
-               #     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-               #     model.resize_token_embedding(len(tokenizer))
               # Unpack the data loaders
               for split in data_split_names:
                    calibration_data_path = os.path.join(calibration_data_dir, f"calibration_data_{split}.dill")
@@ -337,10 +381,72 @@ def run_calibration_benchmark(
                          train_targets,
                     )
                     nonparametric_scalers[method] = scaler
+                    
+    ########################################
+    ## Alpha tuning for ourmethod (train) ##
+    ########################################
+    # Tune alpha = weight of freq(c_i) vs ver(c_i) on the held-out train split.
+    # Held-out sizes: TruthfulQA train = 409; TriviaQA train 20% ≈ 2,400 examples.
+    ourmethod_best_alpha: float = 0.0   # default: verification-only (matches current results)
+    ourmethod_alpha_sensitivity: Dict[float, float] = {}
+
+    if "ourmethod" in baseline_methods:
+        print(f"\n[ourmethod] Tuning alpha on train split ({dataset_name}, {model_name}) …")
+        openai_client_tune = OpenAI(api_key=OPENAI_API_KEY, base_url=BASE_URL)
+        measurer_tune = ClaimUncertaintyMeasurer(
+            model_name=model_name,
+            device=device,
+            claim_extractor_model="gpt-4o-mini",
+        )
+        train_split_data = calibration_data["train"]
+        # For TriviaQA use 20 % of train; for TruthfulQA use the full 409-example train split
+        tune_fraction = 0.1 if dataset_name == "trivia_qa" else 1.0
+        tune_items = list(train_split_data.items())
+        n_tune = max(1, int(len(tune_items) * tune_fraction))
+        rng = np.random.default_rng(seed)
+        tune_idx = rng.choice(len(tune_items), size=n_tune, replace=False)
+        tune_items = [tune_items[i] for i in tune_idx]
+
+        train_ver, train_freq, train_correct = [], [], []
+        for _, question_data in tqdm(tune_items, desc="[alpha-tune] computing ver+freq"):
+            answer = question_data.get("answer", "")
+            question = question_data.get("question", "")
+            accuracy = float(question_data.get("accuracy", 0))
+            try:
+                claims = measurer_tune.measure_uncertainty_for_answer(
+                    answer=answer,
+                    question=question,
+                    openai_client=openai_client_tune,
+                    alpha=0.0,               # store raw ver and freq separately
+                    n_consistency_samples=5,
+                )
+                if claims:
+                    train_ver.append(float(np.mean([c.ver_confidence for c in claims])))
+                    train_freq.append(float(np.mean([c.freq_confidence for c in claims])))
+                else:
+                    train_ver.append(0.5)
+                    train_freq.append(0.5)
+            except Exception as e:
+                print(f"[alpha-tune] error: {e}")
+                train_ver.append(0.5)
+                train_freq.append(0.5)
+            train_correct.append(accuracy)
+
+        ourmethod_best_alpha, ourmethod_alpha_sensitivity = tune_alpha(
+            ver_scores=np.array(train_ver),
+            freq_scores=np.array(train_freq),
+            correctness=np.array(train_correct),
+        )
+        print(
+            f"[ourmethod] best α = {ourmethod_best_alpha}  "
+            f"(model={model_name}, dataset={dataset_name})"
+        )
+        print(f"[ourmethod] ECE by α: {ourmethod_alpha_sensitivity}")
+
     ################################
     ## Evaluate baseline methods  ##
     ################################
-    baseline_confidences = defaultdict(dict) # 
+    baseline_confidences = defaultdict(dict) #
     baseline_results = {}
     masks = defaultdict(dict) # For qualitative verbalization
 
@@ -408,11 +514,54 @@ def run_calibration_benchmark(
                   baseline_confidences[split_name]["lmvslm"] = np.array(lmvslm_scores)
                   # Free up memory after loading calibration data
                   lmvslm.__del__()
+               # TODO: run this lines
+              if method == "ourmethod":
+                  openai_client = OpenAI(
+                         api_key=OPENAI_API_KEY,
+                         base_url=BASE_URL,
+                  )
+                  measurer = ClaimUncertaintyMeasurer(
+                         model_name=model_name,
+                         device=device,
+                         claim_extractor_model="gpt-4o-mini"
+                   )
+                  ourmethod_scores = []
+                  print(
+                      f"Processing {method} for {split_name} "
+                      f"(α={ourmethod_best_alpha}, N=5 consistency samples)"
+                  )
+                  for question_data in tqdm(split_data.values()):
+                         answer = question_data["answer"]
+                         question = question_data["question"]
+                         claims_with_uncertainty = measurer.measure_uncertainty_for_answer(
+                              answer=answer,
+                              question=question,
+                              openai_client=openai_client,
+                              alpha=ourmethod_best_alpha,
+                              n_consistency_samples=5,
+                         )
+                         for i, claim in enumerate(claims_with_uncertainty, 1):
+                              print(f"\nClaim {i}:")
+                              print(f"  Text: {claim.text}")
+                              print(
+                                  f"  ver={claim.ver_confidence:.4f}  "
+                                  f"freq={claim.freq_confidence:.4f}  "
+                                  f"combined={claim.uncertainty:.4f}"
+                              )
+                              print(f"  Number of tokens: {claim.num_tokens}")
 
-               if method == "ourmethod":
-                    # TODO: Implement our method
-                    # use verbalized qualitative uncertainties for claims
-
+                         # Get overall answer confidence (mean of combined per-claim scores)
+                         overall_uncertainty = measurer.get_aggregated_uncertainty(
+                              aggregation="mean",
+                              claims_with_uncertainty=claims_with_uncertainty,
+                         )
+                         print(f"Overall answer confidence: {overall_uncertainty:.4f}")
+                         ourmethod_scores.append(overall_uncertainty)
+                  baseline_confidences[split_name]["ourmethod"] = np.array(ourmethod_scores)
+                  # Store alpha metadata in results
+                  baseline_results["ourmethod_best_alpha"] = ourmethod_best_alpha
+                  baseline_results["ourmethod_alpha_sensitivity"] = str(ourmethod_alpha_sensitivity)
+                  
               cot_likelihoods = np.array(
                    [
                         question_data["cot_seq_likelihood"]
@@ -476,6 +625,8 @@ def run_calibration_benchmark(
     #### EVALUATION ###
     eval_data = defaultdict(lambda: dict())
     for split_name in data_split_names:
+         cdf_baseline_confidences = {}
+         cdf_baseline_correctness = {}
          for baseline_name, confidences in baseline_confidences[split_name].items():
               correctness = np.array(
                    [
@@ -524,7 +675,7 @@ def run_calibration_benchmark(
 
               # Collect data for combined reliability diagrams
               if img_dir is not None:
-                    if not os.path.exists(img_dir):
+                    if not os.path.exists(img_dir):                                                                                                                                      
                         os.makedirs(img_dir)
                     
                     model_name_edited = model_name.replace("/", "_")
@@ -540,39 +691,22 @@ def run_calibration_benchmark(
                               f"{split_name}_{baseline_name}_success", 1
                          ),
                     )
+                    cdf_baseline_confidences[baseline_name] = confidences
+                    cdf_baseline_correctness[baseline_name] = correctness
 
-
-#                    # Store data for combined plotting
-#                    if split_name not in eval_data["combined_plots"]:
-#                         eval_data["combined_plots"][split_name] = {
-#                              "confidences": [],
-#                              "correctness": [],
-#                              "labels": [],
-#                              "success_percentages": []
-#                         }
-                   
-#                    eval_data["combined_plots"][split_name]["confidences"].append(confidences)
-#                    eval_data["combined_plots"][split_name]["correctness"].append(correctness)
-#                    eval_data["combined_plots"][split_name]["labels"].append(baseline_name)
-#                    eval_data["combined_plots"][split_name]["success_percentages"].append(
-#                         baseline_results.get(f"{split_name}_{baseline_name}_success", 1)
-#                    )
-
-#     # Plot combined reliability diagrams
-#     if img_dir is not None:
-#          model_name_edited = model_name.replace("/", "_")
-#          for split_name, plot_data in eval_data["combined_plots"].items():
-#               plot_multiple_reliability_diagrams(
-#                    all_confidences_list=plot_data["confidences"],
-#                    all_correctness_list=plot_data["correctness"],
-#                    labels=plot_data["labels"],
-#                    save_path=os.path.join(
-#                         img_dir,
-#                         f"{split_name}_combined_{dataset_name}_{model_name_edited}.pdf"
-#                    ),
-#                    success_percentages=plot_data["success_percentages"]
-#               )
-
+         if img_dir is not None and len(cdf_baseline_confidences) > 0:
+              if not os.path.exists(img_dir):
+                   os.makedirs(img_dir)
+              model_name_edited = model_name.replace("/", "_")
+              plot_reliability_diagram_cdf(
+                   baseline_confidences=cdf_baseline_confidences,
+                   save_path=os.path.join(
+                        img_dir,
+                        f"{split_name}_all_baselines_cdf_{dataset_name}_{model_name_edited}.pdf",
+                   ),
+                   baseline_correctness=cdf_baseline_correctness,
+              )
+              
     # Create results directory to save results
     baseline_results_dir=None
     
@@ -620,20 +754,21 @@ def run_calibration_benchmark(
                    ):
                         results_df.at[baseline_name, eval_metric] = round(result, 3)
                         break
-                   
-    print(results_df)
+
     print(results_df.to_latex(float_format="%.3f"))
     with open(f"results_{model_name.replace('/', '_')}_{dataset_name}.csv", "w") as f:
          writer = csv.writer(f)
          writer.writerow(["name", "result"])
          for name, result in baseline_results.items():
               writer.writerow([name, result])
-              print(f"{name}: {result:.3f}")
+              if isinstance(result, (int, float)):
+                   print(f"{name}: {result:.3f}")
+              else:
+                   print(f"{name}: {result}")
 
     # Log to wandb
     if wandb_run is not None:
          wandb_run.log(baseline_results)
-
 
 def main():
     parser = argparse.ArgumentParser()

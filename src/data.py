@@ -140,7 +140,7 @@ def extract_closed_box_calibration_data(
     split: str,
     data_dir: str,
     dataset_name: str,
-    source_data_model_name: str="mistralai/Mistral-7B-Instruct-v0.3",
+    source_data_model_name: str="meta-llama/Llama-3.1-8B-Instruct",
 ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     """
         Extracts the calibration data from the source data model
@@ -227,7 +227,7 @@ def extract_closed_box_calibration_data(
                 "gold_answer": gold_answer,
             }
 
-            if "deepseek" in model_name:
+            if "deepseek" in model_name or "gpt-5.2" in model_name:
                 answer_completion = client.chat.completions.create(
                     model = model_name,
                     messages = [
@@ -260,7 +260,7 @@ def extract_closed_box_calibration_data(
                     cot_answer = "No answer provided by the model."
 
                 cot_answer_likelihood = 0.0
-            elif "gpt" in model_name:
+            elif "gpt-4o" in model_name:
                 # Sequence likelihoods
                 # Get normal model answer
                 answer_completion = client.chat.completions.create(
@@ -322,7 +322,7 @@ def extract_closed_box_calibration_data(
                         "content": QUAL_VERBALIZED_CONF_PROMPT
                     },
                 ],
-                max_tokens=10,
+                max_completion_tokens=10,
                 seed=SEED,
             )
             # Calculate the number of tokens
@@ -344,7 +344,7 @@ def extract_closed_box_calibration_data(
                         "content": QUAL_VERBALIZED_CONF_PROMPT
                     },
                 ],
-                max_tokens=10,
+                max_completion_tokens=10,
                 seed=SEED,
             )
             # Calculate the number of tokens
@@ -433,19 +433,8 @@ def extract_model_calibration_data(
     
     calibration_data = {}
     eos_token_ids = {} 
-    for eos_token in END_OF_GENERATION_TOKENS: # check token_ids of eos_tokens
-        print(tokenizer(eos_token)["input_ids"])
-        eos_token_ids = tokenizer(eos_token)["input_ids"]
-        with open("log.txt", "a") as f:
-            f.write(f"Model: {model.__class__.__name__}\n")
-            f.write(f"Tokenizer: {tokenizer.__class__.__name__}\n")
-            f.write(f"Device: {device}\n")
-            f.write(f"Max generation length: {max_generation_length}\n")
-            f.write(f"Max input length: {max_input_length}\n")
-            f.write(f"Max samples: {max_samples}\n")
-            f.write(f"End of generation token: {eos_token}\n")
-            f.write(f"End of generation token ids: {eos_token_ids}\n")
     
+    # get eos token ids for the model, needed for the model to stop generating
     if model.__class__.__name__ in ["LlamaForCausalLM", "MistralForCausalLM"]:
         eos_token_ids = [
             [tokenizer(eos_token)["input_ids"][1]] for eos_token in END_OF_GENERATION_TOKENS # 
@@ -620,13 +609,11 @@ def extract_model_calibration_data(
                     eos_token_id=tokenizer.eos_token_id,
                     bad_words_ids=eos_token_ids,
                 )
-                generated_answer_ids = outputs["sequences"][
-                    :, inputs.shape[1] :
-                ].squeeze(0) # remove the special tokens
+                generated_answer_ids = outputs["sequences"][:, inputs.shape[1] :].squeeze(0) # extract only output sequence ids, starting from the input length to the end. [batch_size, sequence_length]
                 verbalized_uncertainties[name] = tokenizer.batch_decode(
                     generated_answer_ids, 
-                    skip_special_tokens=True # remove the special tokens
-                )
+                    skip_special_tokens=True
+                ) # decode the generated answer ids to text, remove the special tokens
 
         included_questions += batch["question_id"]   
         
@@ -659,7 +646,7 @@ def extract_model_calibration_data(
             verbalized_uncertainties["cot_qual"],
             seq_likelihoods,
             cot_seq_likelihoods,
-        ):             
+        ):
             calibration_data[question_id] = {
                 "accuracy": int(correctness),
                 "score": float(answer_score),
@@ -807,102 +794,6 @@ def preprocess_batch_wrapper(
     
     return preprocess_batch
 
-# Create a preprocess_batch_wrapper for TruthfulQA dataset
-def preprocess_batch_wrapper_truthful_qa(
-    train_data: Dataset,
-    num_in_context_samples: int,
-    tokenizer: AutoTokenizer,
-    max_input_length: int
-) -> Callable:
-    """
-        Closure for the process batch function that makes a certain variables available to the function scope.
-    """
-
-    def preprocess_batch(batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
-        """
-            Process a specific batch of TruthfulQA.
-        """
-        answer_field = "best_answer" if "best_answer" in batch else "answer"
-        answers = [
-            str(answer) if not isinstance(answer, dict) else answer["value"]
-            for answer in batch[answer_field]
-        ]
-        correct_answers_field = "correct_answers" if "correct_answers" in batch else "answer"
-        correct_answers = []
-        for batch_answers in batch[correct_answers_field]:
-            current_length = len(batch_answers)
-            append_batch_answers = batch_answers
-
-            if len(batch_answers) < 12:
-                append_batch_answers.extend([""] * (12 - current_length))
-            
-            correct_answers.append(append_batch_answers)
-
-
-        # select few-shot examples
-        few_shot_prompts = []
-        for _ in range(len(answers)):
-            few_shot_prompt = ""
-
-            if num_in_context_samples > 0:
-                train_indices = np.random.choice(
-                    range(0, len(train_data)), size=num_in_context_samples
-                )
-                in_context_samples = train_data.select(train_indices)
-
-                for sample in in_context_samples:
-                    answer = (
-                        sample["best_answer"]
-                        if "best_answer" in sample and not isinstance(sample["best_answer"], dict)
-                        else sample.get("best_answer", sample["best_answer"]["value"])
-                    )
-                    few_shot_prompt += QA_FEW_SHOT_TEMPLATE.format(question=sample["question"], answer=answer)
-                
-            few_shot_prompts.append(few_shot_prompt)
-        
-        batch_with_prompt = [
-            few_shot_prompt + " Question: " + question + " Your response should only be in english and no other language." + " Answer:"
-            for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
-        ]
-        batch_with_cot_prompt = [
-            few_shot_prompt + QA_COT_PROMPT + " Question: " + question + " Your response should only be in english and no other language." + " Answer:"
-            for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
-        ]
-        tokenizer.padding_side = "left" # necessary for left padding
-        inputs = tokenizer(
-            batch_with_prompt,
-            padding="max_length", # for padding, we want to pad the left side of the sequence
-            truncation=True, # for truncation, we want to truncate the right side of the sequence
-            max_length=max_input_length,
-        )
-        cot_inputs = tokenizer(
-            batch_with_cot_prompt,
-            padding="max_length", # for padding, we want to pad the left side of the sequence
-            truncation=True, # for truncation, we want to truncate the right side of the sequence
-            max_length=max_input_length,
-        )
-
-        batch["input_ids"] = inputs.input_ids
-        batch["attention_mask"] = inputs.attention_mask
-        batch["cot_input_ids"] = cot_inputs.input_ids
-        batch["cot_attention_mask"] = cot_inputs.attention_mask
-        batch["best_answer"] = answers
-        batch["correct_answers"] = correct_answers
-
-        # Generate question IDs for OOD test set
-        if "question_id" not in batch:
-            batch["question_id"] = [
-                hashlib.sha256(
-                    question.encode("utf-8")
-                ).hexdigest() 
-                for question in batch["question"]
-            ] # hash the question to get a unique ID for each question
-
-        return batch
-    
-    return preprocess_batch
-
-
 def preprocess_trivia_qa(
     model_name: str,
     num_in_context_samples: int,
@@ -1015,6 +906,101 @@ def preprocess_trivia_qa(
     }
 
     return data_loaders
+
+# Create a preprocess_batch_wrapper for TruthfulQA dataset
+def preprocess_batch_wrapper_truthful_qa(
+    train_data: Dataset,
+    num_in_context_samples: int,
+    tokenizer: AutoTokenizer,
+    max_input_length: int
+) -> Callable:
+    """
+        Closure for the process batch function that makes a certain variables available to the function scope.
+    """
+
+    def preprocess_batch(batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """
+            Process a specific batch of TruthfulQA.
+        """
+        answer_field = "best_answer" if "best_answer" in batch else "answer"
+        answers = [
+            str(answer) if not isinstance(answer, dict) else answer["value"]
+            for answer in batch[answer_field]
+        ]
+        correct_answers_field = "correct_answers" if "correct_answers" in batch else "answer"
+        correct_answers = []
+        for batch_answers in batch[correct_answers_field]:
+            current_length = len(batch_answers)
+            append_batch_answers = batch_answers
+
+            if len(batch_answers) < 12:
+                append_batch_answers.extend([""] * (12 - current_length))
+            
+            correct_answers.append(append_batch_answers)
+
+
+        # select few-shot examples
+        few_shot_prompts = []
+        for _ in range(len(answers)):
+            few_shot_prompt = ""
+
+            if num_in_context_samples > 0:
+                train_indices = np.random.choice(
+                    range(0, len(train_data)), size=num_in_context_samples
+                )
+                in_context_samples = train_data.select(train_indices)
+
+                for sample in in_context_samples:
+                    answer = (
+                        sample["best_answer"]
+                        if "best_answer" in sample and not isinstance(sample["best_answer"], dict)
+                        else sample.get("best_answer", sample["best_answer"]["value"])
+                    )
+                    few_shot_prompt += QA_FEW_SHOT_TEMPLATE.format(question=sample["question"], answer=answer)
+                
+            few_shot_prompts.append(few_shot_prompt)
+        
+        batch_with_prompt = [
+            few_shot_prompt + " Question: " + question + " Your response should only be in english and no other language." + " Answer:"
+            for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
+        ]
+        batch_with_cot_prompt = [
+            few_shot_prompt + QA_COT_PROMPT + " Question: " + question + " Your response should only be in english and no other language." + " Answer:"
+            for question, few_shot_prompt in zip(batch["question"], few_shot_prompts)
+        ]
+        tokenizer.padding_side = "left" # necessary for left padding
+        inputs = tokenizer(
+            batch_with_prompt,
+            padding="max_length", # for padding, we want to pad the left side of the sequence
+            truncation=True, # for truncation, we want to truncate the right side of the sequence
+            max_length=max_input_length,
+        )
+        cot_inputs = tokenizer(
+            batch_with_cot_prompt,
+            padding="max_length", # for padding, we want to pad the left side of the sequence
+            truncation=True, # for truncation, we want to truncate the right side of the sequence
+            max_length=max_input_length,
+        )
+
+        batch["input_ids"] = inputs.input_ids
+        batch["attention_mask"] = inputs.attention_mask
+        batch["cot_input_ids"] = cot_inputs.input_ids
+        batch["cot_attention_mask"] = cot_inputs.attention_mask
+        batch["best_answer"] = answers
+        batch["correct_answers"] = correct_answers
+
+        # Generate question IDs for OOD test set
+        if "question_id" not in batch:
+            batch["question_id"] = [
+                hashlib.sha256(
+                    question.encode("utf-8")
+                ).hexdigest() 
+                for question in batch["question"]
+            ] # hash the question to get a unique ID for each question
+
+        return batch
+    
+    return preprocess_batch
 
 # def collated_function(x):
 #     """
